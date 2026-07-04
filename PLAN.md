@@ -13,7 +13,7 @@ audited.
       transactions endpoint/pagination, `settlement-type` field on
       EquityOption/FutureOption, settlement cash surfaced in `Receive Deliver`
       transaction `value`.
-- [x] SQLAlchemy models: `raw_transactions`, `open_lots`, `lot_closes`,
+- [x] SQLAlchemy models: `raw_transactions`, `lots`, `lot_closes`,
       `instrument_meta`, `sync_runs` (Postgres-portable types).
 - [x] OAuth2 token manager (refresh token → 15-min access tokens).
 - [x] Sync engine: backfill + incremental (7-day overlap), idempotent by
@@ -47,6 +47,23 @@ audited.
 - [ ] Sanity check: sum of `lot_closes.realized_pnl` + open-lot cost basis
       vs. account cash flows for a bounded date range.
 
+### Phase 2.5 — Schema hardening ✅ (done 2026-07-04)
+
+Done ahead of any external consumer (dashboard, annotations) while renames
+were still free:
+
+- [x] Stable lot identity: `lot_id` IS the opening broker txn id; close rows
+      keyed by `(lot_id, broker_close_txn_id)`; `open_lots` renamed to `lots`.
+- [x] Money quantization at match time (fees/PnL 4dp, prices/multipliers 8dp).
+- [x] Composite indexes on `lot_closes` for the analytics query shapes.
+- [x] `accounts` cache table (nickname/type), refreshed on sync, offline
+      `tastydb accounts`.
+- [x] Suite at 42 tests. Legacy DBs migrate automatically (derived tables
+      dropped and rebuilt).
+- Deferred: integer-cents money storage (only if tax-grade exactness is ever
+  needed from SQLite; moot on Postgres). Alembic once the raw-table schema
+  next changes — `create_all` only adds tables, never columns.
+
 ### Phase 3 — Corporate actions & completeness
 
 - [ ] Forward/reverse splits: adjust open-lot quantity/price when a
@@ -58,7 +75,11 @@ audited.
 
 ### Phase 4 — Analytics depth (nice to have)
 
-- [ ] Unrealized PnL: mark open lots via `/market-data/by-type`.
+- [ ] Web dashboard to explore/browse/analyze PnL: filter by account, show
+      open positions, realized PnL views (stable lot ids from Phase 2.5 make
+      lot-level URLs/annotations safe).
+- [ ] Unrealized PnL: mark open lots via `/market-data/by-type` (feeds the
+      dashboard's open-positions view).
 - [ ] Per-strategy grouping (order-id / ext-group-id links legs of spreads).
 - [ ] Wash-sale awareness for tax-oriented reports.
 - [ ] Export: CSV/parquet dump of `lot_closes` for spreadsheets.
@@ -73,6 +94,8 @@ audited.
   cash flows (same total per closed lot; MTM `Money Movement` rows stay
   ignored).
 - Matching per exact symbol (not underlying) — see CLAUDE.md invariants.
+- Lot identity is the opening broker txn id; external references must never
+  use `close_id` (rebuild-scoped) — use `(lot_id, broker_close_txn_id)`.
 
 ## Open questions
 
