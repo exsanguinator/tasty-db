@@ -1,12 +1,18 @@
-"""Lot matching: replays classified position events into open_lots/lot_closes.
+"""Lot matching: replays classified position events into lots/lot_closes.
 
 Design decisions:
 
 - Deterministic rebuild. `rebuild_lots` wipes derived tables and replays the
   full raw ledger in (executed_at, id) order. Raw transactions are the source
   of truth; deriving lots from scratch every run makes reprocessing after a
-  matching-logic fix or a fee reconciliation trivially correct. Lot ids are
-  therefore not stable across rebuilds.
+  matching-logic fix or a fee reconciliation trivially correct. Lot identity
+  is stable across rebuilds: lot_id IS the opening broker transaction id.
+  Close rows are stable via (lot_id, broker_close_txn_id); their close_id
+  surrogate is internal only.
+
+- Money hygiene: fee allocations and realized PnL are quantized to 4 decimal
+  places (prices/multipliers to 8) so pro-rata splits never leak repeating
+  decimals or float artifacts into the DB.
 
 - Matching group. Lots are matched per (account, exact symbol, side) — exact
   symbol rather than just underlying+asset_type, because an option's symbol
@@ -39,7 +45,7 @@ from .models import (
     AssetType,
     CloseReason,
     LotClose,
-    OpenLot,
+    Lot,
     RawTransaction,
     SettlementType,
     Side,
@@ -48,6 +54,8 @@ from .models import (
 log = logging.getLogger(__name__)
 
 ZERO = Decimal("0")
+Q_MONEY = Decimal("0.0001")  # fees / realized PnL
+Q_PRICE = Decimal("0.00000001")  # prices / multipliers
 
 
 class _LinkGroup:
@@ -56,7 +64,7 @@ class _LinkGroup:
     def __init__(self):
         self.removal_closes: list[LotClose] = []
         self.removal_reason: CloseReason | None = None
-        self.delivery_lots: list[OpenLot] = []
+        self.delivery_lots: list[Lot] = []
         self.delivery_closes: list[LotClose] = []
 
 
@@ -68,7 +76,7 @@ class Matcher:
         self._meta = meta
         self._method = method
         # (account, symbol, side) -> open lots in open order
-        self._book: dict[tuple[str, str, Side], list[OpenLot]] = {}
+        self._book: dict[tuple[str, str, Side], list[Lot]] = {}
         self._links: dict[tuple, _LinkGroup] = {}
 
     # -- event application ---------------------------------------------------
@@ -147,7 +155,7 @@ class Matcher:
             and event.price and event.price > ZERO
             and event.gross_value and event.qty > ZERO
         ):
-            derived = event.gross_value / (event.qty * event.price)
+            derived = (event.gross_value / (event.qty * event.price)).quantize(Q_PRICE)
             # >1% deviation guards against cents-rounding noise in `value`
             deviation = (
                 abs(derived - meta.multiplier) / meta.multiplier
@@ -162,10 +170,11 @@ class Matcher:
                 meta.source = "derived"
         return meta.multiplier
 
-    def _open_lot(self, event: PositionEvent, side: Side, qty: Decimal, fees: Decimal) -> OpenLot:
+    def _open_lot(self, event: PositionEvent, side: Side, qty: Decimal, fees: Decimal) -> Lot:
         meta = self._meta.get(event.symbol, event.instrument_type)
         multiplier = self._resolve_multiplier(event, meta)
-        lot = OpenLot(
+        lot = Lot(
+            lot_id=event.txn_id,  # stable identity: the opening broker txn id
             broker_txn_id=event.txn_id,
             account_id=event.account,
             symbol=event.symbol,
@@ -206,9 +215,11 @@ class Matcher:
         return remaining
 
     def _fee_share(self, event: PositionEvent, qty: Decimal) -> Decimal:
-        return event.fees * qty / event.qty if event.qty else ZERO
+        if not event.qty:
+            return ZERO
+        return (event.fees * qty / event.qty).quantize(Q_MONEY)
 
-    def _close_price(self, event: PositionEvent, lot: OpenLot) -> Decimal:
+    def _close_price(self, event: PositionEvent, lot: Lot) -> Decimal:
         if event.close_reason == CloseReason.cash_settlement:
             # The broker transaction's value is the official exchange settlement
             # cash. Convert to an effective per-unit price so the standard PnL
@@ -216,13 +227,14 @@ class Matcher:
             # shorts pay it) because side_sign handles the direction.
             if event.cash_value is None or event.qty == ZERO:
                 return ZERO
-            return abs(event.cash_value) / (event.qty * lot.multiplier)
+            return (abs(event.cash_value) / (event.qty * lot.multiplier)).quantize(Q_PRICE)
         return event.price if event.price is not None else ZERO
 
-    def _record_close(self, event: PositionEvent, lot: OpenLot, side: Side, qty: Decimal) -> LotClose:
+    def _record_close(self, event: PositionEvent, lot: Lot, side: Side, qty: Decimal) -> LotClose:
         close_price = self._close_price(event, lot)
         open_fee_share = (
-            lot.open_fees * qty / lot.original_quantity if lot.original_quantity else ZERO
+            (lot.open_fees * qty / lot.original_quantity).quantize(Q_MONEY)
+            if lot.original_quantity else ZERO
         )
         close_fee_share = self._fee_share(event, qty)
         side_sign = 1 if side == Side.long else -1
@@ -230,7 +242,7 @@ class Matcher:
             (close_price - lot.open_price) * qty * lot.multiplier * side_sign
             - open_fee_share
             - close_fee_share
-        )
+        ).quantize(Q_MONEY)
         row = LotClose(
             lot=lot,
             broker_close_txn_id=event.txn_id,
@@ -333,7 +345,7 @@ def rebuild_lots(
 ) -> dict:
     """Wipe and rebuild open_lots/lot_closes from raw_transactions."""
     session.execute(delete(LotClose))
-    session.execute(delete(OpenLot))
+    session.execute(delete(Lot))
 
     txns = (
         session.execute(
@@ -360,7 +372,7 @@ def rebuild_lots(
     session.commit()
 
     open_count = session.execute(
-        select(func.count()).select_from(OpenLot).where(OpenLot.remaining_quantity > 0)
+        select(func.count()).select_from(Lot).where(Lot.remaining_quantity > 0)
     ).scalar_one()
     close_count = session.execute(select(func.count()).select_from(LotClose)).scalar_one()
     return {

@@ -51,10 +51,14 @@ class TastyClient:
 
     # -- accounts ----------------------------------------------------------
 
-    def account_numbers(self) -> list[str]:
+    def accounts(self) -> list[dict]:
+        """Account objects visible to the grant (account-number, nickname,
+        account-type-name, margin-or-cash, ...)."""
         body = self._get("/customers/me/accounts")
-        items = body["data"]["items"]
-        return [item["account"]["account-number"] for item in items]
+        return [item["account"] for item in body["data"]["items"]]
+
+    def account_numbers(self) -> list[str]:
+        return [account["account-number"] for account in self.accounts()]
 
     # -- transactions ------------------------------------------------------
 

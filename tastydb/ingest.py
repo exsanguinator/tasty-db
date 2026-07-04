@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .client import TastyClient
-from .models import ProcessingStatus, RawTransaction, SyncRun
+from .models import Account, ProcessingStatus, RawTransaction, SyncRun
 
 INCREMENTAL_OVERLAP_DAYS = 7
 
@@ -113,6 +113,20 @@ def ingest_payloads(session: Session, payloads: Iterable[dict]) -> tuple[int, in
             existing.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             updated += 1
     return fetched, inserted, updated
+
+
+def upsert_accounts(session: Session, accounts: list[dict]) -> None:
+    """Cache account metadata (nickname etc.) so it's available offline."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for payload in accounts:
+        number = payload["account-number"]
+        row = session.get(Account, number) or Account(account_number=number)
+        row.nickname = payload.get("nickname")
+        row.account_type_name = payload.get("account-type-name")
+        row.margin_or_cash = payload.get("margin-or-cash")
+        row.payload = payload
+        row.synced_at = now
+        session.add(row)
 
 
 def latest_transaction_date(session: Session, account_number: str) -> date | None:

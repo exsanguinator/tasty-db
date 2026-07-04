@@ -70,16 +70,23 @@ tastydb status                 # ingest counts + anything needing attention
   transaction id), full JSON payload plus parsed columns and a
   `processing_status`. Ingest is separate from classification, so matching
   bugs never require re-fetching.
-- **`open_lots`** (OpenTable) — one row per opening execution. Partial closes
-  decrement `remaining_quantity`; the row survives for cost-basis history.
-  `settlement_type` is stamped at open time from instrument metadata.
+- **`lots`** (OpenTable) — one row per opening execution. Partial closes
+  decrement `remaining_quantity`; the row survives for cost-basis history
+  ("open lots" = `remaining_quantity > 0`). `settlement_type` is stamped at
+  open time from instrument metadata. `lot_id` IS the opening broker
+  transaction id, so lot identity is stable across `process` rebuilds and
+  safe for external references.
 - **`lot_closes`** (CloseTable) — one row per close event per lot (a close
-  spanning N lots produces N rows). `realized_pnl` =
+  spanning N lots produces N rows). Stable natural key:
+  `(lot_id, broker_close_txn_id)`; the `close_id` surrogate is rebuild-scoped.
+  Fees and PnL are quantized (4dp) at write time. `realized_pnl` =
   `(close_price − open_price) × quantity_closed × multiplier × side_sign − fees`
   with open/close fees allocated pro-rata. `close_reason` ∈ trade /
   expiration / assignment / exercise / cash_settlement. `linked_lot_id` points
   at the stock/futures lot opened by a physical assignment/exercise;
   `broker_close_txn_id` is NULL for synthetic worthless-expiration closes.
+- **`accounts`** — cached account metadata (nickname, type), refreshed on
+  every sync so `tastydb accounts` works offline.
 - **`instrument_meta`** — cached multiplier/settlement metadata per symbol.
   `source` records provenance: `api` (instruments endpoints, with the
   future-option multiplier computed from notional-value/display-factor),
@@ -103,10 +110,11 @@ tastydb status                 # ingest counts + anything needing attention
 
 ## Design notes & caveats
 
-- `tastydb process` **rebuilds** `open_lots`/`lot_closes` from scratch on every
+- `tastydb process` **rebuilds** `lots`/`lot_closes` from scratch on every
   run. Raw transactions are the source of truth and matching is deterministic,
   so reprocessing after a rule fix or an overnight fee reconciliation is always
-  correct — but lot ids are not stable across rebuilds.
+  correct. Lot ids are stable anyway (they're the opening broker txn ids);
+  only `close_id` is rebuild-scoped.
 - Matching is per **(account, exact symbol, side)** — exact symbol rather than
   the spec's underlying+asset_type, because option symbols encode
   strike/expiration and closes must never cross contracts. FIFO within the

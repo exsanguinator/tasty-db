@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from tastydb.models import CloseReason, LotClose, OpenLot, Side
+from tastydb.models import CloseReason, LotClose, Lot, Side
 
 from .conftest import make_txn, run_pipeline
 
@@ -12,8 +12,8 @@ def _closes(session) -> list[LotClose]:
     return session.execute(select(LotClose).order_by(LotClose.close_id)).scalars().all()
 
 
-def _lots(session) -> list[OpenLot]:
-    return session.execute(select(OpenLot).order_by(OpenLot.lot_id)).scalars().all()
+def _lots(session) -> list[Lot]:
+    return session.execute(select(Lot).order_by(Lot.lot_id)).scalars().all()
 
 
 def test_fifo_split_close_across_lots(session):

@@ -24,6 +24,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -117,13 +118,19 @@ class RawTransaction(Base):
     __table_args__ = (Index("ix_raw_txn_order", "executed_at", "id"),)
 
 
-class OpenLot(Base):
+class Lot(Base):
     """One row per opening execution ("OpenTable"). Survives partial closes:
-    remaining_quantity is decremented; the row stays for cost-basis history."""
+    remaining_quantity is decremented; the row stays for cost-basis history,
+    so this table holds fully-closed lots too ("open" means remaining > 0).
 
-    __tablename__ = "open_lots"
+    lot_id IS the opening broker transaction id — a deterministic, stable
+    identity that survives `process` rebuilds, safe for external references
+    (dashboards, annotations). broker_txn_id is kept as an explicit alias.
+    """
 
-    lot_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    __tablename__ = "lots"
+
+    lot_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     broker_txn_id: Mapped[int] = mapped_column(BigInteger, unique=True)
     account_id: Mapped[str] = mapped_column(String(32), index=True)
     symbol: Mapped[str] = mapped_column(String(64), index=True)
@@ -151,6 +158,8 @@ class LotClose(Base):
     """One row per close event against a lot ("CloseTable"). A single closing
     transaction that spans several lots produces several rows.
 
+    close_id is an internal surrogate that changes on rebuild — external
+    references must use the stable natural key (lot_id, broker_close_txn_id).
     account_id/symbol/underlying_symbol/asset_type/side/multiplier are
     denormalized from the lot so analytics never needs a join.
     broker_close_txn_id is NULL for synthetic closes (worthless expiration
@@ -160,7 +169,7 @@ class LotClose(Base):
     __tablename__ = "lot_closes"
 
     close_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    lot_id: Mapped[int] = mapped_column(ForeignKey("open_lots.lot_id"), index=True)
+    lot_id: Mapped[int] = mapped_column(ForeignKey("lots.lot_id"), index=True)
     broker_close_txn_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     account_id: Mapped[str] = mapped_column(String(32), index=True)
     symbol: Mapped[str] = mapped_column(String(64), index=True)
@@ -178,10 +187,34 @@ class LotClose(Base):
     close_reason: Mapped[CloseReason] = mapped_column(_enum(CloseReason))
     realized_pnl: Mapped[Decimal] = mapped_column(MONEY)
     hold_days: Mapped[int] = mapped_column(Integer)
-    linked_lot_id: Mapped[int | None] = mapped_column(ForeignKey("open_lots.lot_id"))
+    linked_lot_id: Mapped[int | None] = mapped_column(ForeignKey("lots.lot_id"))
 
-    lot: Mapped[OpenLot] = relationship(back_populates="closes", foreign_keys=[lot_id])
-    linked_lot: Mapped[OpenLot | None] = relationship(foreign_keys=[linked_lot_id])
+    lot: Mapped[Lot] = relationship(back_populates="closes", foreign_keys=[lot_id])
+    linked_lot: Mapped[Lot | None] = relationship(foreign_keys=[linked_lot_id])
+
+    __table_args__ = (
+        # stable natural key for external references; also the dedupe identity
+        UniqueConstraint("lot_id", "broker_close_txn_id", name="uq_close_natural_key"),
+        # the shapes analytics actually queries
+        Index("ix_closes_account_date", "account_id", "close_date"),
+        Index("ix_closes_underlying_date", "underlying_symbol", "close_date"),
+    )
+
+
+class Account(Base):
+    """Cached account metadata from /customers/me/accounts, refreshed on every
+    sync so nicknames are available offline."""
+
+    __tablename__ = "accounts"
+
+    account_number: Mapped[str] = mapped_column(String(32), primary_key=True)
+    nickname: Mapped[str | None] = mapped_column(String(128))
+    account_type_name: Mapped[str | None] = mapped_column(String(64))
+    margin_or_cash: Mapped[str | None] = mapped_column(String(16))
+    payload: Mapped[dict | None] = mapped_column(JSON)
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
 
 
 class InstrumentMeta(Base):

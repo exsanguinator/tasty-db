@@ -25,10 +25,12 @@ raw payloads via `tests/conftest.py:make_txn` and run the pipeline offline.
    `processing_status`; unknown position-affecting shapes become
    `unsupported`, never silently dropped.
 3. **Match** (`matching.py`): replays events in (executed_at, id) order into
-   `open_lots` / `lot_closes`, FIFO or LIFO. **`rebuild_lots` wipes and
-   rebuilds the derived tables every run** — raw is the source of truth, so
-   never write incremental updates to lots/closes, and never treat lot_id as
-   stable across runs.
+   `lots` / `lot_closes`, FIFO or LIFO. **`rebuild_lots` wipes and rebuilds
+   the derived tables every run** — raw is the source of truth, so never
+   write incremental updates to lots/closes. Identity is still stable:
+   `lot_id` IS the opening broker txn id, and a close row's natural key is
+   (lot_id, broker_close_txn_id); only `close_id` is a rebuild-scoped
+   surrogate.
 
 Supporting modules: `auth.py` (OAuth2 refresh-token → 15-min access tokens),
 `client.py` (REST, pagination), `instruments.py` (multiplier/settlement-type
@@ -52,6 +54,9 @@ parsers), `analytics.py` (PnL aggregation), `cli.py` (click).
   transaction would be misbooked as worthless expiry.
 - Money columns are `Numeric`, enums are `native_enum=False` VARCHAR, payloads
   are generic `JSON` — keep it that way so the schema ports to Postgres.
+- Fees and realized PnL are quantized to 4dp, prices/multipliers to 8dp, at
+  match time (`matching.Q_MONEY`/`Q_PRICE`) — never write unquantized
+  divisions to money columns (SQLite stores them as floats).
 - Timestamps are stored UTC-naive (converted on ingest).
 - Fee sign convention: positive = cost (`Debit`), negative = rebate.
 

@@ -9,7 +9,7 @@ from tastydb.models import (
     CloseReason,
     InstrumentMeta,
     LotClose,
-    OpenLot,
+    Lot,
     ProcessingStatus,
     RawTransaction,
 )
@@ -72,7 +72,7 @@ def test_cash_settlement_double_transaction_pattern(session):
     assert short_close.realized_pnl == Decimal("-3172")  # (4.42 - 20.28) * 2 * 100
 
     # no phantom lots from the removal legs
-    lots = session.execute(select(OpenLot)).scalars().all()
+    lots = session.execute(select(Lot)).scalars().all()
     assert len(lots) == 2
     assert all(lot.remaining_quantity == 0 for lot in lots)
 
@@ -126,7 +126,7 @@ def test_stale_fallback_meta_is_rederived(session):
                      executed_at="2021-04-20T15:00:00+00:00"),
         ],
     )
-    lot = session.execute(select(OpenLot)).scalar_one()
+    lot = session.execute(select(Lot)).scalar_one()
     assert lot.multiplier == Decimal("5")
     assert lot.futures_contract_code == "MES"
 
@@ -191,5 +191,5 @@ def test_manual_meta_rows_are_never_recomputed(session):
                      executed_at="2021-04-20T15:00:00+00:00"),
         ],
     )
-    lot = session.execute(select(OpenLot)).scalar_one()
+    lot = session.execute(select(Lot)).scalar_one()
     assert lot.multiplier == Decimal("7")  # pinned value wins

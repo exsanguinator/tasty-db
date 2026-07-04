@@ -23,10 +23,10 @@ from .auth import AuthError
 from .client import TastyClient
 from .config import Config, load_dotenv
 from .db import init_db, make_engine, make_session_factory
-from .ingest import sync_account
+from .ingest import sync_account, upsert_accounts
 from .instruments import MetaProvider
 from .matching import rebuild_lots
-from .models import LotClose, OpenLot, ProcessingStatus, RawTransaction
+from .models import Account, Lot, LotClose, ProcessingStatus, RawTransaction
 
 log = logging.getLogger(__name__)
 
@@ -90,9 +90,27 @@ def init_db_cmd(app: App):
 @main.command()
 @click.pass_obj
 def accounts(app: App):
-    """List account numbers visible to your OAuth grant."""
-    for number in app.client().account_numbers():
-        click.echo(number)
+    """List accounts visible to your OAuth grant (cached copy when offline)."""
+    init_db(app.engine)
+    client = app.optional_client()
+    with app.session_factory() as session:
+        if client is not None:
+            rows = client.accounts()
+            upsert_accounts(session, rows)
+            session.commit()
+            listing = [(a["account-number"], a.get("nickname") or "") for a in rows]
+        else:
+            cached = session.execute(
+                select(Account).order_by(Account.account_number)
+            ).scalars().all()
+            if not cached:
+                raise click.ClickException(
+                    "no credentials and no cached accounts — run `tastydb sync` once"
+                )
+            click.echo("(offline: cached account list)", err=True)
+            listing = [(a.account_number, a.nickname or "") for a in cached]
+    for number, nickname in listing:
+        click.echo(f"{number:<12} {nickname}".rstrip())
 
 
 @main.command()
@@ -105,9 +123,13 @@ def sync(app: App, account_number: str | None, backfill: bool, since):
     """Pull transaction history into raw storage (idempotent, safe to re-run)."""
     init_db(app.engine)
     client = app.client()
-    numbers = [account_number] if account_number else client.account_numbers()
+    account_rows = client.accounts()
+    numbers = [account_number] if account_number else [
+        a["account-number"] for a in account_rows
+    ]
     since_date: date | None = since.date() if since else None
     with app.session_factory() as session:
+        upsert_accounts(session, account_rows)
         for number in numbers:
             run = sync_account(session, client, number, backfill=backfill, since=since_date)
             click.echo(
@@ -192,7 +214,7 @@ def status(app: App):
             .group_by(RawTransaction.processing_status)
         ).all()
         open_lots = session.execute(
-            select(func.count()).select_from(OpenLot).where(OpenLot.remaining_quantity > 0)
+            select(func.count()).select_from(Lot).where(Lot.remaining_quantity > 0)
         ).scalar_one()
         closes = session.execute(select(func.count()).select_from(LotClose)).scalar_one()
 
