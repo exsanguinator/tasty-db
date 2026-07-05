@@ -44,8 +44,10 @@ audited.
 - [ ] Spot-check realized PnL for a handful of known trades (one per asset
       type, one assignment, one SPX/XSP cash settlement) against the
       tastytrade app's history screen.
-- [ ] Sanity check: sum of `lot_closes.realized_pnl` + open-lot cost basis
-      vs. account cash flows for a bounded date range.
+- [x] Sanity check: NLV-based PnL identity verified for YTD 2026 —
+      `NLV_end − NLV_start − net flows` = $137,974 vs lot-realized $140,865 +
+      dividends/interest $1,159; residual ≈ Δunrealized on open lots.
+      External flows match hand-computed SQL to the cent. (2026-07-05)
 
 ### Phase 2.5 — Schema hardening ✅ (done 2026-07-04)
 
@@ -98,6 +100,18 @@ were still free:
       multi-underlying orders (chains keyed per account+underlying so pairs
       trades never cross-link). Verified on prod: 346 chains, biggest an
       IBIT campaign of 46 orders / 83 lots. (2026-07-04)
+- [x] **Account-level returns (NLV + money flow).** `balance_snapshots`
+      fetched during `tastydb sync` (EOD, back to inception where the API
+      has it — 2019 for the oldest account; `/net-liq/history` fallback for
+      older gaps); `cashflows.py` classifies Money Movement into external
+      flows vs performance by description (sub-types are unreliable);
+      `returns.py` computes daily-chained TWR, XIRR (bisection), and dollar
+      PnL; `tastydb returns` CLI + dashboard `/performance` view with NLV
+      and growth-of-$100 charts. Known caveat: one dormant account
+      (1DA16486) has a broker-side data hole — its ~$5k funding/emptying
+      transactions are absent from the API, distorting its dollar PnL and
+      the combined all-time TWR at that 2020-06-20 cliff; bounded windows
+      are clean. (2026-07-05)
 - [ ] Wash-sale awareness for tax-oriented reports.
 - [ ] Export: CSV/parquet dump of `lot_closes` for spreadsheets.
 - [ ] Move to Postgres if the DB outgrows SQLite (schema already portable).

@@ -276,6 +276,30 @@ class Mark(Base):
     )
 
 
+class BalanceSnapshot(Base):
+    """Daily account balance snapshot from GET /accounts/{n}/balance-snapshots.
+
+    Fetched data (like raw_transactions), not derived — never dropped by
+    `process` rebuilds. `source` records provenance: "snapshot" rows come from
+    the balance-snapshots endpoint; "netliq_history" rows backfill dates older
+    than the endpoint's history from /net-liq/history daily closes (which have
+    no cash balance) and are never allowed to overwrite a "snapshot" row.
+    """
+
+    __tablename__ = "balance_snapshots"
+
+    account_number: Mapped[str] = mapped_column(String(32), primary_key=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    time_of_day: Mapped[str] = mapped_column(String(8), primary_key=True, default="EOD")
+    net_liquidating_value: Mapped[Decimal] = mapped_column(MONEY)
+    cash_balance: Mapped[Decimal | None] = mapped_column(MONEY)
+    source: Mapped[str] = mapped_column(String(16), default="snapshot")
+    payload: Mapped[dict | None] = mapped_column(JSON)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+
+
 class SyncRun(Base):
     """Audit log of sync runs (one row per account per invocation)."""
 

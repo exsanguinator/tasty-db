@@ -1,15 +1,24 @@
-<div class="chart-wrap"><canvas id="pnl-chart"></canvas></div>
+{# Reusable line chart. Callers may override via {% with %}:
+     chart_id (default "pnl-chart"), chart_labels, chart_values,
+     chart_format ("money" | "number"), chart_label (tooltip prefix). #}
+{% set chart_id = chart_id | default("pnl-chart") %}
+{% set chart_format = chart_format | default("money") %}
+{% set chart_label = chart_label | default("cumulative") %}
+<div class="chart-wrap"><canvas id="{{ chart_id }}"></canvas></div>
 <script src="/static/chart.umd.js"></script>
-<script id="chart-data" type="application/json">
-  {"labels": {{ chart_labels | tojson }}, "values": {{ chart_values | tojson }}}
+<script id="{{ chart_id }}-data" type="application/json">
+  {"labels": {{ chart_labels | tojson }}, "values": {{ chart_values | tojson }},
+   "format": {{ chart_format | tojson }}, "label": {{ chart_label | tojson }}}
 </script>
 <script>
   (function () {
-    const data = JSON.parse(document.getElementById("chart-data").textContent);
+    const data = JSON.parse(document.getElementById("{{ chart_id }}-data").textContent);
     if (!data.labels.length) return;
     const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     const money = (v) => (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
-    new Chart(document.getElementById("pnl-chart"), {
+    const plain = (v) => v.toLocaleString(undefined, { maximumFractionDigits: 1 });
+    const fmt = data.format === "money" ? money : plain;
+    new Chart(document.getElementById("{{ chart_id }}"), {
       type: "line",
       data: {
         labels: data.labels,
@@ -31,7 +40,7 @@
           legend: { display: false },
           tooltip: {
             displayColors: false,
-            callbacks: { label: (ctx) => "cumulative " + money(ctx.parsed.y) },
+            callbacks: { label: (ctx) => data.label + " " + fmt(ctx.parsed.y) },
           },
         },
         scales: {
@@ -43,7 +52,7 @@
           y: {
             grid: { color: css("--grid") },
             border: { display: false },
-            ticks: { color: css("--muted"), callback: (v) => money(v) },
+            ticks: { color: css("--muted"), callback: (v) => fmt(v) },
           },
         },
       },

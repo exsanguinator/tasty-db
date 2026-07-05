@@ -26,12 +26,14 @@ from ..analytics import (
     strategies,
 )
 from ..auth import AuthError
+from ..cashflows import external_flows
 from ..chains import chain_detail, chains
 from ..client import TastyClient
 from ..config import Config
 from ..db import init_db, make_engine, make_session_factory
 from ..marks import refresh_marks
 from ..models import Account, Lot, LotClose
+from ..returns import nlv_series, period_returns, twr_index
 from .. import __version__
 
 log = logging.getLogger(__name__)
@@ -66,6 +68,12 @@ def _qty(value) -> str:
     return f"{v.normalize():f}"
 
 
+def _pct(value) -> str:
+    if value is None:
+        return "—"
+    return f"{Decimal(str(value)) * 100:+.2f}%"
+
+
 def _parse_date(raw: str | None) -> date | None:
     if not raw:
         return None
@@ -87,6 +95,7 @@ def create_app(config: Config) -> FastAPI:
     templates.env.filters["signed_money"] = _signed_money
     templates.env.filters["pnl_class"] = _pnl_class
     templates.env.filters["qty"] = _qty
+    templates.env.filters["pct"] = _pct
 
     def filters_from(request: Request) -> dict:
         params = request.query_params
@@ -209,6 +218,24 @@ def create_app(config: Config) -> FastAPI:
         with session_factory() as session:
             details = chain_detail(session, chain_id)
         return render(request, "chain.html", chain_id=chain_id, details=details)
+
+    @app.get("/performance")
+    def performance_view(request: Request):
+        f = filters_from(request)
+        with session_factory() as session:
+            pr = period_returns(session, **f)
+            nlv = nlv_series(session, **f)
+            index = twr_index(session, **f)
+            flows = external_flows(session, **f)
+        flows.sort(key=lambda fl: (fl.date, fl.txn_id), reverse=True)
+        return render(
+            request, "performance.html",
+            pr=pr, flows=flows,
+            nlv_labels=[p[0].isoformat() for p in nlv],
+            nlv_values=[float(p[1]) for p in nlv],
+            idx_labels=[p[0].isoformat() for p in index],
+            idx_values=[float(p[1]) for p in index],
+        )
 
     @app.get("/lot/{lot_id}")
     def lot_view(request: Request, lot_id: int):

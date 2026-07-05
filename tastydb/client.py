@@ -60,25 +60,15 @@ class TastyClient:
     def account_numbers(self) -> list[str]:
         return [account["account-number"] for account in self.accounts()]
 
-    # -- transactions ------------------------------------------------------
-
-    def iter_transactions(
-        self,
-        account_number: str,
-        start_date: date | None = None,
-        per_page: int = 1000,
+    def _iter_pages(
+        self, path: str, params: dict[str, Any], per_page: int
     ) -> Iterator[dict]:
-        """Yield all transactions for an account, oldest first."""
+        """Yield items across a paginated list endpoint (page-offset/per-page)."""
         page_offset = 0
         while True:
-            params: dict[str, Any] = {
-                "sort": "Asc",
-                "per-page": per_page,
-                "page-offset": page_offset,
-            }
-            if start_date is not None:
-                params["start-date"] = start_date.isoformat()
-            body = self._get(f"/accounts/{account_number}/transactions", params)
+            body = self._get(
+                path, {**params, "per-page": per_page, "page-offset": page_offset}
+            )
             items = body["data"]["items"]
             yield from items
             pagination = body.get("pagination") or {}
@@ -89,6 +79,51 @@ class TastyClient:
                     return
             elif len(items) < per_page:
                 return
+
+    # -- transactions ------------------------------------------------------
+
+    def iter_transactions(
+        self,
+        account_number: str,
+        start_date: date | None = None,
+        per_page: int = 1000,
+    ) -> Iterator[dict]:
+        """Yield all transactions for an account, oldest first."""
+        params: dict[str, Any] = {"sort": "Asc"}
+        if start_date is not None:
+            params["start-date"] = start_date.isoformat()
+        yield from self._iter_pages(
+            f"/accounts/{account_number}/transactions", params, per_page
+        )
+
+    # -- balances ------------------------------------------------------------
+
+    def iter_balance_snapshots(
+        self,
+        account_number: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        time_of_day: str = "EOD",
+        per_page: int = 1000,
+    ) -> Iterator[dict]:
+        """Yield historical AccountBalanceSnapshot items (kebab-case keys:
+        snapshot-date, net-liquidating-value, cash-balance, ...)."""
+        params: dict[str, Any] = {"time-of-day": time_of_day}
+        if start_date is not None:
+            params["start-date"] = start_date.isoformat()
+        if end_date is not None:
+            params["end-date"] = end_date.isoformat()
+        yield from self._iter_pages(
+            f"/accounts/{account_number}/balance-snapshots", params, per_page
+        )
+
+    def net_liq_history(self, account_number: str, time_back: str = "all") -> list[dict]:
+        """Daily net-liq OHLC history. NOTE: camelCase response keys (like
+        /market-data/by-type) and production-only — sandbox has no data."""
+        body = self._get(
+            f"/accounts/{account_number}/net-liq/history", {"time-back": time_back}
+        )
+        return body["data"]["items"]
 
     # -- instruments -------------------------------------------------------
 

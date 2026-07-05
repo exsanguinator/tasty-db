@@ -11,17 +11,24 @@ transaction; dedupe-by-id makes the overlap free.
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Iterable
 
+log = logging.getLogger(__name__)
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .client import TastyClient
-from .models import Account, ProcessingStatus, RawTransaction, SyncRun
+from .client import ApiError, TastyClient
+from .models import Account, BalanceSnapshot, ProcessingStatus, RawTransaction, SyncRun
 
 INCREMENTAL_OVERLAP_DAYS = 7
+
+# a balance-snapshot history starting this much later than the account's first
+# transaction is treated as truncated and backfilled from /net-liq/history
+SNAPSHOT_GAP_TOLERANCE_DAYS = 14
 
 # Fee fields on the Transaction model, each paired with a *-effect of
 # Debit (a cost), Credit (a rebate), or None.
@@ -171,3 +178,160 @@ def sync_account(
     run.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.commit()
     return run
+
+
+# -- balance snapshots -------------------------------------------------------
+
+
+def earliest_transaction_date(session: Session, account_number: str) -> date | None:
+    value = session.execute(
+        select(func.min(RawTransaction.executed_at)).where(
+            RawTransaction.account_number == account_number
+        )
+    ).scalar_one_or_none()
+    return value.date() if value else None
+
+
+def _upsert_snapshot(
+    session: Session,
+    *,
+    account_number: str,
+    snapshot_date: date,
+    time_of_day: str,
+    nlv: Decimal,
+    cash_balance: Decimal | None,
+    source: str,
+    payload: dict | None,
+) -> int:
+    row = session.get(BalanceSnapshot, (account_number, snapshot_date, time_of_day))
+    if row is None:
+        session.add(BalanceSnapshot(
+            account_number=account_number,
+            snapshot_date=snapshot_date,
+            time_of_day=time_of_day,
+            net_liquidating_value=nlv,
+            cash_balance=cash_balance,
+            source=source,
+            payload=payload,
+        ))
+        return 1
+    if row.source == "snapshot" and source == "netliq_history":
+        return 0  # never replace a real snapshot with derived history
+    if (row.net_liquidating_value, row.cash_balance, row.source) == (nlv, cash_balance, source):
+        return 0
+    row.net_liquidating_value = nlv
+    row.cash_balance = cash_balance
+    row.source = source
+    row.payload = payload
+    row.fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    return 1
+
+
+def _netliq_time_to_date(raw) -> date | None:
+    """The net-liq/history `time` field is unverified in the docs; accept epoch
+    seconds/millis or an ISO datetime (possibly with a trailing [UTC] zone id)."""
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        ts = float(raw)
+        if ts > 1e11:  # epoch millis
+            ts /= 1000.0
+        return datetime.fromtimestamp(ts, tz=timezone.utc).date()
+    text = str(raw).split("[", 1)[0]
+    try:
+        return _utc_naive(text).date()
+    except ValueError:
+        return None
+
+
+def sync_balance_snapshots(
+    session: Session,
+    client: TastyClient,
+    account_number: str,
+    backfill: bool = False,
+) -> tuple[int, date | None, date | None]:
+    """Fetch EOD balance snapshots for one account into balance_snapshots.
+    Idempotent (upsert by PK). Returns (upserted, min_date, max_date) over the
+    account's stored rows. If the endpoint's history starts well after the
+    account's first transaction, older dates are backfilled from
+    /net-liq/history daily closes (source='netliq_history')."""
+    latest = session.execute(
+        select(func.max(BalanceSnapshot.snapshot_date)).where(
+            BalanceSnapshot.account_number == account_number
+        )
+    ).scalar_one_or_none()
+    first_txn = earliest_transaction_date(session, account_number)
+    if backfill or latest is None:
+        start = first_txn
+    else:
+        start = latest - timedelta(days=INCREMENTAL_OVERLAP_DAYS)
+
+    upserted = 0
+    for item in client.iter_balance_snapshots(account_number, start_date=start):
+        raw_date = item.get("snapshot-date")
+        nlv = _dec(item.get("net-liquidating-value"))
+        if raw_date is None or nlv is None:
+            continue  # e.g. the current-balance item the endpoint appends
+        upserted += _upsert_snapshot(
+            session,
+            account_number=account_number,
+            snapshot_date=date.fromisoformat(raw_date),
+            time_of_day=item.get("time-of-day") or "EOD",
+            nlv=nlv,
+            cash_balance=_dec(item.get("cash-balance")),
+            source="snapshot",
+            payload=item,
+        )
+    session.flush()
+
+    bounds = session.execute(
+        select(
+            func.min(BalanceSnapshot.snapshot_date),
+            func.max(BalanceSnapshot.snapshot_date),
+        ).where(BalanceSnapshot.account_number == account_number)
+    ).one()
+    earliest_snap: date | None = bounds[0]
+
+    gap = (
+        first_txn is not None
+        and (earliest_snap is None
+             or (earliest_snap - first_txn).days > SNAPSHOT_GAP_TOLERANCE_DAYS)
+    )
+    if gap:
+        log.info(
+            "%s: balance snapshots start %s but first transaction is %s — "
+            "backfilling from net-liq history",
+            account_number, earliest_snap, first_txn,
+        )
+        try:
+            items = client.net_liq_history(account_number, time_back="all")
+        except ApiError as exc:
+            log.warning("%s: net-liq history unavailable: %s", account_number, exc)
+            items = []
+        for item in items:
+            day = _netliq_time_to_date(item.get("time"))
+            close = _dec(item.get("close"))
+            if day is None or close is None:
+                continue
+            if earliest_snap is not None and day >= earliest_snap:
+                continue  # real snapshots win from that date on
+            upserted += _upsert_snapshot(
+                session,
+                account_number=account_number,
+                snapshot_date=day,
+                time_of_day="EOD",
+                nlv=close,
+                cash_balance=None,
+                source="netliq_history",
+                payload=item,
+            )
+        session.flush()
+        bounds = session.execute(
+            select(
+                func.min(BalanceSnapshot.snapshot_date),
+                func.max(BalanceSnapshot.snapshot_date),
+            ).where(BalanceSnapshot.account_number == account_number)
+        ).one()
+
+    session.commit()
+    return upserted, bounds[0], bounds[1]

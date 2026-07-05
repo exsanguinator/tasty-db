@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Performance · tasty-db{% endblock %}
+{% block content %}
+
+{% if pr.days == 0 %}
+<div class="panel"><div class="empty">
+  Not enough balance snapshots{% if filters.start or filters.end %} in this range{% endif %} —
+  returns need at least two. Run <code>tastydb sync</code> to fetch net-liq history.
+</div></div>
+{% else %}
+
+<div class="cards">
+  <div class="card">
+    <div class="label">NLV {{ pr.end_date }}</div>
+    <div class="value">{{ pr.end_nlv | money }}</div>
+  </div>
+  <div class="card">
+    <div class="label">PnL <span class="sub">{{ pr.start_date }} → {{ pr.end_date }}</span></div>
+    <div class="value {{ pr.pnl | pnl_class }}">{{ pr.pnl | signed_money }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Net contributions</div>
+    <div class="value">{{ pr.net_flows | signed_money }}</div>
+  </div>
+  <div class="card">
+    <div class="label">TWR</div>
+    <div class="value {{ pr.twr | pnl_class }}">{{ pr.twr | pct }}</div>
+  </div>
+  <div class="card">
+    <div class="label">TWR annualized</div>
+    <div class="value {{ pr.twr_annualized | pnl_class }}">{{ pr.twr_annualized | pct }}</div>
+  </div>
+  <div class="card">
+    <div class="label">XIRR</div>
+    <div class="value {{ pr.xirr | pnl_class }}">{{ pr.xirr | pct }}</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Net liquidating value <span class="sub">EOD snapshots; account money flows move this line</span></h2>
+  {% with chart_id = "nlv-chart", chart_labels = nlv_labels, chart_values = nlv_values, chart_label = "NLV" %}
+    {% include "_chart.html" %}
+  {% endwith %}
+</div>
+
+<div class="panel">
+  <h2>Time-weighted growth of $100 <span class="sub">flow-neutral — the benchmark-comparable line</span></h2>
+  {% with chart_id = "twr-chart", chart_labels = idx_labels, chart_values = idx_values, chart_format = "number", chart_label = "index" %}
+    {% include "_chart.html" %}
+  {% endwith %}
+</div>
+
+{% endif %}
+
+<div class="panel">
+  <h2>External cash flows <span class="sub">deposits, withdrawals, transfers — excluded from performance</span></h2>
+  {% if flows %}
+  <table>
+    <thead>
+      <tr><th>Date</th><th>Account</th><th>Category</th><th>Description</th><th class="num">Amount</th></tr>
+    </thead>
+    <tbody>
+      {% for f in flows %}
+      <tr>
+        <td>{{ f.date }}</td>
+        <td>{{ account_names.get(f.account_number, f.account_number) }}</td>
+        <td><span class="tag">{{ f.category }}</span></td>
+        <td>{{ f.description }}</td>
+        <td class="num {{ f.amount | pnl_class }}">{{ f.amount | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No external cash flows in range.</div>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -37,9 +37,24 @@ Supporting modules: `auth.py` (OAuth2 refresh-token → 15-min access tokens),
 (multiplier/settlement-type cache with offline symbology fallbacks),
 `symbology.py` (OCC/futures symbol parsers), `analytics.py` (PnL aggregation,
 positions, strategies), `chains.py` (roll-chain grouping + campaign
-analytics), `marks.py` (mark cache for unrealized PnL),
-`cli.py` (click), `web/` (FastAPI + Jinja dashboard, served by
-`tastydb dashboard`; read-only except POST /marks/refresh).
+analytics), `marks.py` (mark cache for unrealized PnL), `cashflows.py`
+(Money Movement → external-flow vs performance classification, computed on
+demand from raw), `returns.py` (account TWR/XIRR from `balance_snapshots` +
+external flows), `cli.py` (click), `web/` (FastAPI + Jinja dashboard, served
+by `tastydb dashboard`; read-only except POST /marks/refresh).
+
+Account returns: `tastydb sync` also upserts EOD `balance_snapshots`
+(per-account PK (account, date, time_of_day); older-than-history gaps
+backfilled from `/net-liq/history` with `source='netliq_history'`, which
+never overwrites a real `source='snapshot'` row). `returns.py` chains daily
+TWR links `r=(NLV−F)/NLV_prev` (EOD flow convention; zero/negative-base
+links skipped, never sign-flipped) and solves XIRR by bisection (needs flows
+in both directions, else None). Money Movement sub-types LIE: interest,
+dividends, and rebates appear under "Deposit", margin interest under
+"Withdrawal" — `cashflows.py` classifies by symbol-presence (dividends/MTM
+carry one, true flows never do) then description patterns; unrecognized
+flow-claiming rows become `unclassified_flow` (treated external, listed by
+`tastydb status`). Journals between own accounts cancel in combined views.
 
 Strategy grouping keys on `open_order_id` (the opening trade's broker
 order-id, present on 100% of Trade txns; NULL on Receive Deliver, so

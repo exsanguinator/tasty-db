@@ -61,6 +61,7 @@ tastydb sync                   # incremental (re-fetches a 7-day overlap; dedupe
 tastydb process                # classify + match into lots/closes
 tastydb pnl --start 2026-01-01 --end 2026-06-30
 tastydb pnl --underlying SPX --group-by close_reason
+tastydb returns --start 2026-01-01   # account-level TWR / XIRR from NLV + cash flows
 tastydb status                 # ingest counts + anything needing attention
 tastydb dashboard              # local web dashboard at http://127.0.0.1:8787/
 ```
@@ -89,6 +90,15 @@ tastydb dashboard              # local web dashboard at http://127.0.0.1:8787/
   cross-links two campaigns), merge naturally when one order rolls two
   positions, and follow partial rolls. Strategy rows and lot pages link to
   their chain.
+- **Performance** (`/performance`) — account-level returns from EOD
+  net-liq snapshots and money flow: NLV chart, time-weighted growth-of-$100
+  chart (flow-neutral, benchmark-comparable), period $PnL
+  (`NLV_end − NLV_start − net external flows`), total + annualized TWR,
+  XIRR, and the external cash-flow table. Deposits/withdrawals/journals/
+  withholding are classified from Money Movement descriptions (sub-types
+  lie: interest and dividends appear under "Deposit", margin interest under
+  "Withdrawal"); journals between your own accounts cancel in the combined
+  view. Unrecognized flow-like rows are flagged in `tastydb status`.
 - **Lot pages** (`/lot/{lot_id}`) — bookmarkable thanks to stable lot ids:
   open details, every close, sibling legs from the same order, and
   assignment-chain navigation via `linked_lot_id`.
@@ -122,6 +132,12 @@ whole app is local.
   `broker_close_txn_id` is NULL for synthetic worthless-expiration closes.
 - **`accounts`** — cached account metadata (nickname, type), refreshed on
   every sync so `tastydb accounts` works offline.
+- **`balance_snapshots`** — EOD net-liq + cash balance per account per day,
+  fetched during `tastydb sync` from `/accounts/{n}/balance-snapshots`
+  (history reaches back to account inception for most accounts; gaps older
+  than the endpoint's history are backfilled from `/net-liq/history` daily
+  closes, marked `source='netliq_history'`, which never overwrite real
+  snapshots). Fetched data like `raw_transactions` — survives `process`.
 - **`instrument_meta`** — cached multiplier/settlement metadata per symbol.
   `source` records provenance: `api` (instruments endpoints, with the
   future-option multiplier computed from notional-value/display-factor),
@@ -166,6 +182,14 @@ whole app is local.
 - If a close arrives with no matching open lot (backfill started
   mid-position), a warning is logged and a lot is opened in the trade's
   direction so subsequent history stays consistent.
+- **Returns math**: TWR chains daily links `r = (NLV_t − flows) / NLV_prev`
+  (end-of-day flow convention; exact to within a day on daily snapshots).
+  Links with a zero/negative base — freshly funded accounts, data-gap
+  anomalies — are skipped rather than sign-flipping the chain. XIRR is
+  bisection on NPV over dated investor flows. Broker data holes exist: one
+  dormant account's funding/emptying transactions were never in the API's
+  history, so its dollar PnL (and the combined all-time TWR through that
+  cliff) is distorted; date-bounded windows after the hole are clean.
 
 ## Tests
 

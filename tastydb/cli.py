@@ -20,13 +20,15 @@ from sqlalchemy import func, select
 
 from .analytics import realized_pnl
 from .auth import AuthError
-from .client import TastyClient
+from .cashflows import unclassified_flows
+from .client import ApiError, TastyClient
 from .config import Config, load_dotenv
 from .db import init_db, make_engine, make_session_factory
-from .ingest import sync_account, upsert_accounts
+from .ingest import sync_account, sync_balance_snapshots, upsert_accounts
 from .instruments import MetaProvider
 from .matching import rebuild_lots
-from .models import Account, Lot, LotClose, ProcessingStatus, RawTransaction
+from .models import Account, BalanceSnapshot, Lot, LotClose, ProcessingStatus, RawTransaction
+from .returns import period_returns
 
 log = logging.getLogger(__name__)
 
@@ -136,6 +138,14 @@ def sync(app: App, account_number: str | None, backfill: bool, since):
                 f"{number}: {run.mode} from {run.start_date_used or 'beginning'} — "
                 f"fetched {run.fetched}, inserted {run.inserted}, updated {run.updated}"
             )
+            try:
+                upserted, lo, hi = sync_balance_snapshots(
+                    session, client, number, backfill=backfill
+                )
+                span = f"{lo} → {hi}" if lo else "none stored"
+                click.echo(f"{number}: {upserted} balance snapshots upserted ({span})")
+            except ApiError as exc:
+                click.echo(f"{number}: balance snapshots failed: {exc}", err=True)
     click.echo("run `tastydb process` to rebuild lots")
 
 
@@ -205,6 +215,49 @@ def pnl(app: App, start, end, underlying: str | None, account: str | None, group
 
 
 @main.command()
+@click.option("--start", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
+@click.option("--end", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
+@click.option("--account", default=None, help="One account (default: each + combined)")
+@click.pass_obj
+def returns(app: App, start, end, account: str | None):
+    """Account-level returns (TWR / XIRR) from NLV snapshots + cash flows."""
+    init_db(app.engine)
+
+    def rate(value) -> str:
+        return f"{value * 100:>9.2f}%" if value is not None else f"{'—':>10}"
+
+    s = start.date() if start else None
+    e = end.date() if end else None
+    with app.session_factory() as session:
+        numbers = [account] if account else sorted(
+            session.execute(select(BalanceSnapshot.account_number).distinct()).scalars()
+        )
+        if not numbers:
+            click.echo("no balance snapshots yet — run `tastydb sync` first")
+            return
+        rows = [period_returns(session, a, s, e) for a in numbers]
+        if len(numbers) > 1:
+            rows.append(period_returns(session, None, s, e))
+
+    header = (
+        f"{'account':<12} {'from':>10} {'to':>10} {'start NLV':>13} {'end NLV':>13} "
+        f"{'net flows':>12} {'PnL':>12} {'TWR':>10} {'TWR ann.':>10} {'XIRR':>10}"
+    )
+    click.echo(header)
+    click.echo("-" * len(header))
+    for r in rows:
+        label = r.account or "COMBINED"
+        if r.days == 0:
+            click.echo(f"{label:<12} not enough snapshots in range")
+            continue
+        click.echo(
+            f"{label:<12} {r.start_date} {r.end_date} {r.start_nlv:>13.2f} "
+            f"{r.end_nlv:>13.2f} {r.net_flows:>12.2f} {r.pnl:>12.2f} "
+            f"{rate(r.twr)} {rate(r.twr_annualized)} {rate(r.xirr)}"
+        )
+
+
+@main.command()
 @click.option("--host", default="127.0.0.1", show_default=True)
 @click.option("--port", default=8787, show_default=True)
 @click.option("--no-browser", is_flag=True, help="Don't open the browser automatically")
@@ -263,6 +316,15 @@ def status(app: App):
                     f"  {txn.id} {txn.executed_at:%Y-%m-%d} {txn.symbol or '-'} "
                     f"[{txn.transaction_type}/{txn.transaction_sub_type}] {txn.processing_note}"
                 )
+
+        flows = unclassified_flows(session)
+        if flows:
+            click.echo(
+                f"\nunclassified money movement ({len(flows)} rows, treated as "
+                f"external flows — add a rule in cashflows.py):"
+            )
+            for f in flows[:20]:
+                click.echo(f"  {f.txn_id} {f.date} [{f.sub_type}] {f.amount:+.2f} {f.description!r}")
 
 
 if __name__ == "__main__":
