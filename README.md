@@ -62,7 +62,32 @@ tastydb process                # classify + match into lots/closes
 tastydb pnl --start 2026-01-01 --end 2026-06-30
 tastydb pnl --underlying SPX --group-by close_reason
 tastydb status                 # ingest counts + anything needing attention
+tastydb dashboard              # local web dashboard at http://127.0.0.1:8787/
 ```
+
+## Web dashboard
+
+`tastydb dashboard` serves a local, read-only web UI over the same database:
+
+- **Overview** — realized PnL / fees / closes cards, cumulative realized PnL
+  chart, top and bottom underlyings, PnL by close reason.
+- **Closes** — browse every realized close (filter by account/date range,
+  toggle group-by-underlying), each row linking to its lot.
+- **Positions** — open lots aggregated per symbol with cost basis and
+  **unrealized PnL** from cached marks; the *Refresh marks* button pulls
+  fresh quotes via `GET /market-data/by-type` (batched, ≤100 symbols/request).
+  This is the dashboard's only write — sync/process stay in the CLI.
+- **Strategies** — closes grouped by their **opening order id**, so the legs
+  of a spread entered as one order report combined PnL (order-id is present
+  on 100% of Trade transactions; assignment deliveries have none and group
+  per lot).
+- **Lot pages** (`/lot/{lot_id}`) — bookmarkable thanks to stable lot ids:
+  open details, every close, sibling legs from the same order, and
+  assignment-chain navigation via `linked_lot_id`.
+
+Every view accepts account + date-range filters (accounts shown by nickname).
+Light/dark theme follows the OS. Chart.js is vendored — no CDN calls; the
+whole app is local.
 
 ## Data model
 

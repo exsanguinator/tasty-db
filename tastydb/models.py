@@ -148,6 +148,9 @@ class Lot(Base):
     expiration_date: Mapped[date | None] = mapped_column(Date, index=True)
     futures_contract_code: Mapped[str | None] = mapped_column(String(16))
     settlement_type: Mapped[SettlementType | None] = mapped_column(_enum(SettlementType))
+    # broker order id of the opening trade; legs of a multi-leg order share it
+    # (strategy grouping key). NULL for deliveries/sweeps (no originating order).
+    open_order_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
 
     closes: Mapped[list["LotClose"]] = relationship(
         back_populates="lot", foreign_keys="LotClose.lot_id"
@@ -188,6 +191,8 @@ class LotClose(Base):
     realized_pnl: Mapped[Decimal] = mapped_column(MONEY)
     hold_days: Mapped[int] = mapped_column(Integer)
     linked_lot_id: Mapped[int | None] = mapped_column(ForeignKey("lots.lot_id"))
+    open_order_id: Mapped[int | None] = mapped_column(BigInteger, index=True)  # from the lot
+    close_order_id: Mapped[int | None] = mapped_column(BigInteger)  # from the closing txn
 
     lot: Mapped[Lot] = relationship(back_populates="closes", foreign_keys=[lot_id])
     linked_lot: Mapped[Lot | None] = relationship(foreign_keys=[linked_lot_id])
@@ -245,6 +250,23 @@ class InstrumentMeta(Base):
     source: Mapped[str] = mapped_column(String(16), default="fallback")
     payload: Mapped[dict | None] = mapped_column(JSON)
     fetched_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+
+
+class Mark(Base):
+    """Latest cached market snapshot per open symbol (from /market-data/by-type).
+    A refreshable cache, not price history — one row per symbol, overwritten."""
+
+    __tablename__ = "marks"
+
+    symbol: Mapped[str] = mapped_column(String(64), primary_key=True)
+    instrument_type: Mapped[str | None] = mapped_column(String(32))
+    mark: Mapped[Decimal | None] = mapped_column(MONEY)
+    bid: Mapped[Decimal | None] = mapped_column(MONEY)
+    ask: Mapped[Decimal | None] = mapped_column(MONEY)
+    mid: Mapped[Decimal | None] = mapped_column(MONEY)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
 

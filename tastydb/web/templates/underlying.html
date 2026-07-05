@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} · tasty-db{% endblock %}
+{% block content %}
+
+<div class="cards">
+  <div class="card">
+    <div class="label">{{ symbol }} realized PnL (shown rows)</div>
+    <div class="value {{ realized | pnl_class }}">{{ realized | signed_money }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Closes in range</div>
+    <div class="value">{{ total }}</div>
+  </div>
+</div>
+
+{% if chart_labels %}
+<div class="panel">
+  <h2>Cumulative realized PnL — {{ symbol }}</h2>
+  {% include "_chart.html" %}
+</div>
+{% endif %}
+
+{% if positions %}
+<div class="panel">
+  <h2>Open positions</h2>
+  <table>
+    <thead><tr><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Avg open</th><th class="num">Mark</th><th class="num">Unrealized</th></tr></thead>
+    <tbody>
+      {% for p in positions %}
+      <tr>
+        <td>{{ p.symbol }}</td>
+        <td>{{ p.side.value }}</td>
+        <td class="num">{{ p.quantity | qty }}</td>
+        <td class="num">{{ p.avg_open_price | money }}</td>
+        <td class="num">{{ p.mark | money if p.mark is not none else '—' }}</td>
+        <td class="num {{ p.unrealized_pnl | pnl_class }}">{{ p.unrealized_pnl | signed_money if p.unrealized_pnl is not none else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if strats %}
+<div class="panel">
+  <h2>Strategies</h2>
+  <table>
+    <thead><tr><th>Legs</th><th>Opened</th><th>Closed</th><th class="num">Realized PnL</th></tr></thead>
+    <tbody>
+      {% for s in strats %}
+      <tr>
+        <td class="legs">{% for leg in s.legs %}{{ leg.side.value }} {{ leg.quantity | qty }} × {{ leg.symbol }}{{ ", " if not loop.last }}{% endfor %}</td>
+        <td>{{ s.open_date.date() }}</td>
+        <td>{{ s.close_date.date() }}</td>
+        <td class="num {{ s.realized_pnl | pnl_class }}">{{ s.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>Closes <span class="sub">newest first, up to 200</span></h2>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Closed</th><th>Symbol</th><th>Side</th><th>Reason</th>
+        <th class="num">Qty</th><th class="num">Open</th><th class="num">Close</th>
+        <th class="num">Realized PnL</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in rows %}
+      <tr>
+        <td>{{ c.close_date.date() }}</td>
+        <td><a href="/lot/{{ c.lot_id }}">{{ c.symbol }}</a></td>
+        <td>{{ c.side.value }}</td>
+        <td><span class="tag">{{ c.close_reason.value }}</span></td>
+        <td class="num">{{ c.quantity_closed | qty }}</td>
+        <td class="num">{{ c.open_price | money }}</td>
+        <td class="num">{{ c.close_price | money }}</td>
+        <td class="num {{ c.realized_pnl | pnl_class }}">{{ c.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No closes in range.</div>
+  {% endif %}
+</div>
+
+{% endblock %}

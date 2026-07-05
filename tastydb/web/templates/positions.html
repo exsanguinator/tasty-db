@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Positions · tasty-db{% endblock %}
+{% block content %}
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Open positions</div>
+    <div class="value">{{ rows | length }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Unrealized PnL {% if marked_count < rows | length %}<span class="dim">({{ marked_count }}/{{ rows | length }} marked)</span>{% endif %}</div>
+    <div class="value {{ total_unrealized | pnl_class }}">{{ total_unrealized | signed_money }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Marks as of</div>
+    <div class="value" style="font-size:16px">
+      {{ stalest.strftime('%Y-%m-%d %H:%M UTC') if stalest else 'never refreshed' }}
+    </div>
+    <form method="post" action="/marks/refresh" style="margin-top:6px">
+      <input type="hidden" name="back" value="/positions?{{ filter_query }}">
+      <button type="submit" {{ 'disabled title=no API credentials' if not can_refresh }}>Refresh marks</button>
+    </form>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Open positions <span class="sub">unrealized PnL is gross of fees; open fees shown separately</span></h2>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Account</th><th>Symbol</th><th>Side</th>
+        <th class="num">Qty</th><th class="num">Avg open</th><th class="num">Basis</th>
+        <th class="num">Open fees</th><th class="num">Mark</th><th class="num">Unrealized</th>
+        <th>Expires</th><th>Lots</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in rows %}
+      <tr>
+        <td>{{ account_names.get(p.account_id, p.account_id) }}</td>
+        <td><a href="/underlying/{{ p.underlying_symbol }}?{{ filter_query }}">{{ p.symbol }}</a></td>
+        <td>{{ p.side.value }}</td>
+        <td class="num">{{ p.quantity | qty }}</td>
+        <td class="num">{{ p.avg_open_price | money }}</td>
+        <td class="num">{{ p.cost_basis | money }}</td>
+        <td class="num">{{ p.open_fees | money }}</td>
+        <td class="num">{{ p.mark | money if p.mark is not none else '—' }}</td>
+        <td class="num {{ p.unrealized_pnl | pnl_class }}">{{ p.unrealized_pnl | signed_money if p.unrealized_pnl is not none else '—' }}</td>
+        <td>{{ p.expiration_date or '' }}</td>
+        <td>{% for lid in p.lot_ids[:3] %}<a href="/lot/{{ lid }}">#{{ loop.index }}</a> {% endfor %}{% if p.lot_ids | length > 3 %}<span class="dim">+{{ p.lot_ids | length - 3 }}</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No open positions.</div>
+  {% endif %}
+</div>
+
+{% endblock %}

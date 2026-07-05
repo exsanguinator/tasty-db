@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Lot {{ lot.lot_id if lot }} · tasty-db{% endblock %}
+{% block content %}
+
+{% if lot is none %}
+<div class="panel"><div class="empty">Lot not found.</div></div>
+{% else %}
+
+<div class="panel">
+  <h2>Lot {{ lot.lot_id }} — {{ lot.symbol }} <span class="tag">{{ lot.asset_type.value }}</span></h2>
+  <dl class="kv">
+    <dt>Account</dt><dd>{{ account_names.get(lot.account_id, lot.account_id) }}</dd>
+    <dt>Side</dt><dd>{{ lot.side.value }}</dd>
+    <dt>Opened</dt><dd>{{ lot.open_date }} UTC</dd>
+    <dt>Open price</dt><dd>{{ lot.open_price | money }} × {{ lot.original_quantity | qty }} (multiplier {{ lot.multiplier | qty }})</dd>
+    <dt>Open fees</dt><dd>{{ lot.open_fees | money }}</dd>
+    <dt>Remaining</dt><dd>{{ lot.remaining_quantity | qty }}</dd>
+    {% if lot.strike is not none %}<dt>Contract</dt><dd>{{ lot.option_type.value if lot.option_type }} strike {{ lot.strike | qty }} exp {{ lot.expiration_date }}</dd>{% endif %}
+    {% if lot.settlement_type %}<dt>Settlement</dt><dd>{{ lot.settlement_type.value }}</dd>{% endif %}
+    {% if lot.open_order_id %}<dt>Opening order</dt><dd>{{ lot.open_order_id }}{% if siblings %} — sibling legs:
+      {% for s in siblings %}<a href="/lot/{{ s.lot_id }}">{{ s.symbol }}</a>{{ ", " if not loop.last }}{% endfor %}{% endif %}</dd>{% endif %}
+    <dt>Broker txn</dt><dd>{{ lot.broker_txn_id }}</dd>
+  </dl>
+</div>
+
+<div class="panel">
+  <h2>Closes against this lot</h2>
+  {% if closes %}
+  <table>
+    <thead>
+      <tr>
+        <th>Closed</th><th>Reason</th><th class="num">Qty</th>
+        <th class="num">Close price</th><th class="num">Fees</th>
+        <th class="num">Hold</th><th class="num">Realized PnL</th><th>Linked lot</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in closes %}
+      <tr>
+        <td>{{ c.close_date.date() }}</td>
+        <td><span class="tag">{{ c.close_reason.value }}</span></td>
+        <td class="num">{{ c.quantity_closed | qty }}</td>
+        <td class="num">{{ c.close_price | money }}</td>
+        <td class="num">{{ (c.open_fees + c.close_fees) | money }}</td>
+        <td class="num">{{ c.hold_days }}d</td>
+        <td class="num {{ c.realized_pnl | pnl_class }}">{{ c.realized_pnl | signed_money }}</td>
+        <td>{% if c.linked_lot_id %}<a href="/lot/{{ c.linked_lot_id }}">{{ c.linked_lot_id }}</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">Still fully open — no closes yet.</div>
+  {% endif %}
+</div>
+
+{% if inbound_links %}
+<div class="panel">
+  <h2>Created by assignment/exercise of</h2>
+  <table>
+    <thead><tr><th>Option lot</th><th>Symbol</th><th>Reason</th><th class="num">Realized PnL</th></tr></thead>
+    <tbody>
+      {% for c in inbound_links %}
+      <tr>
+        <td><a href="/lot/{{ c.lot_id }}">{{ c.lot_id }}</a></td>
+        <td>{{ c.symbol }}</td>
+        <td><span class="tag">{{ c.close_reason.value }}</span></td>
+        <td class="num {{ c.realized_pnl | pnl_class }}">{{ c.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}

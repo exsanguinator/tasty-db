@@ -204,6 +204,27 @@ def pnl(app: App, start, end, underlying: str | None, account: str | None, group
 
 
 @main.command()
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8787, show_default=True)
+@click.option("--no-browser", is_flag=True, help="Don't open the browser automatically")
+@click.pass_obj
+def dashboard(app: App, host: str, port: int, no_browser: bool):
+    """Serve the local web dashboard (read-only; marks refresh is the only write)."""
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from .web.app import create_app
+
+    web_app = create_app(app.config)
+    if not no_browser:
+        threading.Timer(0.8, webbrowser.open, args=(f"http://{host}:{port}/",)).start()
+    click.echo(f"dashboard on http://{host}:{port}/ (db: {app.config.resolved_db_url})")
+    uvicorn.run(web_app, host=host, port=port, log_level="warning")
+
+
+@main.command()
 @click.pass_obj
 def status(app: App):
     """Counts of raw transactions by processing status, plus lot totals."""

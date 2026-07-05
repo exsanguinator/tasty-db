@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Strategies · tasty-db{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>
+    Strategies
+    <span class="sub">closes grouped by opening order — legs entered together stay together</span>
+    {% if underlying %}<span class="sub">underlying = {{ underlying }}</span>{% endif %}
+  </h2>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Account</th><th>Underlying</th><th>Legs</th>
+        <th>Opened</th><th>Closed</th><th>Reasons</th>
+        <th class="num">Realized PnL</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in rows %}
+      <tr>
+        <td>{{ account_names.get(s.account_id, s.account_id) }}</td>
+        <td><a href="/underlying/{{ s.underlying_symbol }}?{{ filter_query }}">{{ s.underlying_symbol }}</a></td>
+        <td class="legs">
+          {% for leg in s.legs %}{{ leg.side.value }} {{ leg.quantity | qty }} × {{ leg.symbol }}{{ ", " if not loop.last }}{% endfor %}
+          <span class="dim">({% for lid in s.lot_ids %}<a href="/lot/{{ lid }}">lot</a>{{ " " if not loop.last }}{% endfor %})</span>
+        </td>
+        <td>{{ s.open_date.date() }}</td>
+        <td>{{ s.close_date.date() }}</td>
+        <td>{% for r in s.close_reasons %}<span class="tag">{{ r }}</span> {% endfor %}</td>
+        <td class="num {{ s.realized_pnl | pnl_class }}">{{ s.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No closed strategies in range.</div>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -104,3 +104,27 @@ class TastyClient:
 
     def future_option(self, symbol: str) -> dict:
         return self._instrument("/instruments/future-options", symbol)
+
+    # -- market data ---------------------------------------------------------
+
+    # NOTE: this endpoint returns camelCase keys (Java service), unlike the
+    # kebab-case used everywhere else, and takes singular hyphenated params.
+    MARKET_DATA_BATCH_LIMIT = 100
+
+    def market_data_by_type(self, symbols_by_type: dict[str, list[str]]) -> list[dict]:
+        """Point-in-time snapshots for symbols grouped by query param name
+        ("equity", "equity-option", "future", "future-option"). Batches to the
+        combined 100-symbols-per-request limit."""
+        flat = [
+            (param, symbol)
+            for param, symbols in symbols_by_type.items()
+            for symbol in symbols
+        ]
+        items: list[dict] = []
+        for start in range(0, len(flat), self.MARKET_DATA_BATCH_LIMIT):
+            params: dict[str, list[str]] = {}
+            for param, symbol in flat[start:start + self.MARKET_DATA_BATCH_LIMIT]:
+                params.setdefault(f"{param}[]", []).append(symbol)
+            body = self._get("/market-data/by-type", params)
+            items.extend(body["data"]["items"])
+        return items

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}tasty-db{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand">tasty-db</span>
+  <nav>
+    {% set path = request.url.path %}
+    <a href="/?{{ filter_query }}" class="{{ 'active' if path == '/' }}">Overview</a>
+    <a href="/closes?{{ filter_query }}" class="{{ 'active' if path.startswith('/closes') }}">Closes</a>
+    <a href="/positions?{{ filter_query }}" class="{{ 'active' if path.startswith('/positions') }}">Positions</a>
+    <a href="/strategies?{{ filter_query }}" class="{{ 'active' if path.startswith('/strategies') }}">Strategies</a>
+  </nav>
+</header>
+<main>
+  <form class="filters" method="get" action="{{ request.url.path }}">
+    <select name="account">
+      <option value="">All accounts</option>
+      {% for a in accounts %}
+        <option value="{{ a.account_number }}" {{ 'selected' if filters.account == a.account_number }}>
+          {{ a.nickname or a.account_number }}
+        </option>
+      {% endfor %}
+    </select>
+    <input type="date" name="start" value="{{ filters.start.isoformat() if filters.start else '' }}">
+    <input type="date" name="end" value="{{ filters.end.isoformat() if filters.end else '' }}">
+    {% for key, value in request.query_params.items() if key not in ('account', 'start', 'end', 'msg', 'page') and value %}
+      <input type="hidden" name="{{ key }}" value="{{ value }}">
+    {% endfor %}
+    <button type="submit">Apply</button>
+    <span class="presets">
+      <a href="{{ request.url.path }}?start={{ today.replace(month=1, day=1).isoformat() }}{{ '&account=' ~ filters.account if filters.account }}">YTD</a>
+      <a href="{{ request.url.path }}?start={{ today.replace(year=today.year - 1).isoformat() }}{{ '&account=' ~ filters.account if filters.account }}">1Y</a>
+      <a href="{{ request.url.path }}{{ '?account=' ~ filters.account if filters.account }}">All</a>
+    </span>
+  </form>
+  {% if message %}<div class="notice">{{ message }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+{% block scripts %}{% endblock %}
+</body>
+</html>

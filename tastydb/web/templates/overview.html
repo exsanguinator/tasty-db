@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Overview · tasty-db{% endblock %}
+{% block content %}
+
+{% if not has_lots %}
+  <div class="notice">No lots yet — run <code>tastydb sync</code> then <code>tastydb process</code>.</div>
+{% endif %}
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Realized PnL</div>
+    <div class="value {{ total | pnl_class }}">{{ total | signed_money }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Fees paid</div>
+    <div class="value">{{ fees | money }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Closes</div>
+    <div class="value">{{ closes }}</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Cumulative realized PnL</h2>
+  {% include "_chart.html" %}
+</div>
+
+<div class="panel">
+  <h2>Top underlyings <span class="sub">by realized PnL in range</span></h2>
+  <table>
+    <thead><tr><th>Underlying</th><th class="num">Closes</th><th class="num">Fees</th><th class="num">Realized PnL</th></tr></thead>
+    <tbody>
+      {% for r in winners %}
+      <tr>
+        <td><a href="/underlying/{{ r.group }}?{{ filter_query }}">{{ r.group }}</a></td>
+        <td class="num">{{ r.closes }}</td>
+        <td class="num">{{ r.fees | money }}</td>
+        <td class="num {{ r.realized_pnl | pnl_class }}">{{ r.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if losers %}
+<div class="panel">
+  <h2>Biggest losers</h2>
+  <table>
+    <thead><tr><th>Underlying</th><th class="num">Closes</th><th class="num">Fees</th><th class="num">Realized PnL</th></tr></thead>
+    <tbody>
+      {% for r in losers %}
+      <tr>
+        <td><a href="/underlying/{{ r.group }}?{{ filter_query }}">{{ r.group }}</a></td>
+        <td class="num">{{ r.closes }}</td>
+        <td class="num">{{ r.fees | money }}</td>
+        <td class="num {{ r.realized_pnl | pnl_class }}">{{ r.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>By close reason</h2>
+  <table>
+    <thead><tr><th>Reason</th><th class="num">Closes</th><th class="num">Realized PnL</th></tr></thead>
+    <tbody>
+      {% for r in by_reason %}
+      <tr>
+        <td>{{ r.group }}</td>
+        <td class="num">{{ r.closes }}</td>
+        <td class="num {{ r.realized_pnl | pnl_class }}">{{ r.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

@@ -192,6 +192,7 @@ class Matcher:
             expiration_date=meta.expiration_date,
             futures_contract_code=meta.contract_code,
             settlement_type=meta.settlement_type,
+            open_order_id=event.order_id,
         )
         self._session.add(lot)
         self._book.setdefault((event.account, event.symbol, side), []).append(lot)
@@ -262,6 +263,8 @@ class Matcher:
             close_reason=event.close_reason,
             realized_pnl=realized,
             hold_days=(event.ts.date() - lot.open_date.date()).days,
+            open_order_id=lot.open_order_id,
+            close_order_id=event.order_id,
         )
         self._session.add(row)
         if event.is_removal:

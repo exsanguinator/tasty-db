@@ -89,6 +89,7 @@ class PositionEvent:
     kind: str  # OPEN | CLOSE | NET
     direction: str | None  # BUY | SELL | None (None = close whichever side is open)
     gross_value: Decimal | None = None  # unsigned txn value (= price*qty*multiplier for options)
+    order_id: int | None = None  # broker order id (None on Receive Deliver txns)
     close_reason: CloseReason = CloseReason.trade
     cash_value: Decimal | None = None  # signed settlement cash (credit positive)
     is_delivery: bool = False  # assignment/exercise delivery leg -> link candidate
@@ -113,6 +114,7 @@ def _base_kwargs(txn: RawTransaction, asset_type: AssetType) -> dict:
         price=txn.price,
         fees=txn.total_fees or Decimal("0"),
         gross_value=abs(txn.value) if txn.value is not None else None,
+        order_id=(txn.payload or {}).get("order-id"),
     )
 
 

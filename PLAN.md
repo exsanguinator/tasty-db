@@ -73,14 +73,19 @@ were still free:
 - [ ] Decide dividend treatment (currently ignored; could feed a separate
       income table rather than lot PnL).
 
-### Phase 4 — Analytics depth (nice to have)
+### Phase 4 — Analytics depth (in progress)
 
-- [ ] Web dashboard to explore/browse/analyze PnL: filter by account, show
-      open positions, realized PnL views (stable lot ids from Phase 2.5 make
-      lot-level URLs/annotations safe).
-- [ ] Unrealized PnL: mark open lots via `/market-data/by-type` (feeds the
-      dashboard's open-positions view).
-- [ ] Per-strategy grouping (order-id / ext-group-id links legs of spreads).
+- [x] Web dashboard (`tastydb dashboard`, FastAPI + Jinja, read-only):
+      overview with cumulative PnL chart, closes browser with
+      group-by-underlying, open positions, strategies, bookmarkable
+      `/lot/{lot_id}` and `/underlying/{symbol}` pages; account + date-range
+      filters on every view. (2026-07-04)
+- [x] Unrealized PnL: `marks` cache table refreshed from
+      `/market-data/by-type` (batched ≤100 symbols, camelCase responses);
+      gross unrealized on the positions view. (2026-07-04)
+- [x] Per-strategy grouping by `open_order_id` (100% coverage on Trade txns;
+      `ext-group-id` rejected — only 61%). Assignment deliveries have no
+      order id and group per lot. (2026-07-04)
 - [ ] Wash-sale awareness for tax-oriented reports.
 - [ ] Export: CSV/parquet dump of `lot_closes` for spreadsheets.
 - [ ] Move to Postgres if the DB outgrows SQLite (schema already portable).

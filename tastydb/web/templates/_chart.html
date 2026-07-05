@@ -1,0 +1,52 @@
+<div class="chart-wrap"><canvas id="pnl-chart"></canvas></div>
+<script src="/static/chart.umd.js"></script>
+<script id="chart-data" type="application/json">
+  {"labels": {{ chart_labels | tojson }}, "values": {{ chart_values | tojson }}}
+</script>
+<script>
+  (function () {
+    const data = JSON.parse(document.getElementById("chart-data").textContent);
+    if (!data.labels.length) return;
+    const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    const money = (v) => (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    new Chart(document.getElementById("pnl-chart"), {
+      type: "line",
+      data: {
+        labels: data.labels,
+        datasets: [{
+          data: data.values,
+          borderColor: css("--series-1"),
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHitRadius: 12,
+          tension: 0,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            displayColors: false,
+            callbacks: { label: (ctx) => "cumulative " + money(ctx.parsed.y) },
+          },
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            border: { color: css("--baseline") },
+            ticks: { color: css("--muted"), maxTicksLimit: 8, maxRotation: 0 },
+          },
+          y: {
+            grid: { color: css("--grid") },
+            border: { display: false },
+            ticks: { color: css("--muted"), callback: (v) => money(v) },
+          },
+        },
+      },
+    });
+  })();
+</script>

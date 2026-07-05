@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Closes · tasty-db{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>
+    Realized closes
+    {% if underlying %}<span class="sub">underlying = {{ underlying }}</span>{% endif %}
+    <span class="sub">
+      {% if grouped %}
+        <a href="/closes?{{ filter_query }}">show individual closes</a>
+      {% else %}
+        {{ total }} rows · <a href="/closes?group=underlying&{{ filter_query }}">group by underlying</a>
+      {% endif %}
+    </span>
+  </h2>
+
+  {% if grouped is not none %}
+  <table>
+    <thead><tr><th>Underlying</th><th class="num">Closes</th><th class="num">Qty</th><th class="num">Fees</th><th class="num">Realized PnL</th></tr></thead>
+    <tbody>
+      {% for r in grouped %}
+      <tr>
+        <td><a href="/underlying/{{ r.group }}?{{ filter_query }}">{{ r.group }}</a></td>
+        <td class="num">{{ r.closes }}</td>
+        <td class="num">{{ r.quantity_closed | qty }}</td>
+        <td class="num">{{ r.fees | money }}</td>
+        <td class="num {{ r.realized_pnl | pnl_class }}">{{ r.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Closed</th><th>Symbol</th><th>Side</th><th>Reason</th>
+        <th class="num">Qty</th><th class="num">Open</th><th class="num">Close</th>
+        <th class="num">Fees</th><th class="num">Hold</th><th class="num">Realized PnL</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in rows %}
+      <tr>
+        <td>{{ c.close_date.date() }}</td>
+        <td><a href="/lot/{{ c.lot_id }}">{{ c.symbol }}</a></td>
+        <td>{{ c.side.value }}</td>
+        <td><span class="tag">{{ c.close_reason.value }}</span></td>
+        <td class="num">{{ c.quantity_closed | qty }}</td>
+        <td class="num">{{ c.open_price | money }}</td>
+        <td class="num">{{ c.close_price | money }}</td>
+        <td class="num">{{ (c.open_fees + c.close_fees) | money }}</td>
+        <td class="num">{{ c.hold_days }}d</td>
+        <td class="num {{ c.realized_pnl | pnl_class }}">{{ c.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="pager">
+    {% if page > 1 %}<a href="/closes?page={{ page - 1 }}&{{ filter_query }}{{ '&underlying=' ~ underlying if underlying }}">← newer</a>{% endif %}
+    <span>page {{ page }} of {{ pages }}</span>
+    {% if page < pages %}<a href="/closes?page={{ page + 1 }}&{{ filter_query }}{{ '&underlying=' ~ underlying if underlying }}">older →</a>{% endif %}
+  </div>
+  {% else %}
+  <div class="empty">No closes in range.</div>
+  {% endif %}
+</div>
+
+{% endblock %}

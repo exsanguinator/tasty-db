@@ -33,9 +33,18 @@ raw payloads via `tests/conftest.py:make_txn` and run the pipeline offline.
    surrogate.
 
 Supporting modules: `auth.py` (OAuth2 refresh-token → 15-min access tokens),
-`client.py` (REST, pagination), `instruments.py` (multiplier/settlement-type
-cache with offline symbology fallbacks), `symbology.py` (OCC/futures symbol
-parsers), `analytics.py` (PnL aggregation), `cli.py` (click).
+`client.py` (REST, pagination, market data), `instruments.py`
+(multiplier/settlement-type cache with offline symbology fallbacks),
+`symbology.py` (OCC/futures symbol parsers), `analytics.py` (PnL aggregation,
+positions, strategies), `marks.py` (mark cache for unrealized PnL),
+`cli.py` (click), `web/` (FastAPI + Jinja dashboard, served by
+`tastydb dashboard`; read-only except POST /marks/refresh).
+
+Strategy grouping keys on `open_order_id` (the opening trade's broker
+order-id, present on 100% of Trade txns; NULL on Receive Deliver, so
+assignment deliveries group per lot). Derived-table schema changes need no
+migration: `db._ensure_derived_schema` drops `lots`/`lot_closes` on any
+column mismatch and `process` rebuilds them.
 
 ## Invariants — do not break
 
