@@ -127,6 +127,15 @@ were still free:
 - Matching per exact symbol (not underlying) — see CLAUDE.md invariants.
 - Lot identity is the opening broker txn id; external references must never
   use `close_id` (rebuild-scoped) — use `(lot_id, broker_close_txn_id)`.
+- Cash flows are classified on demand from raw Money Movement rows
+  (description patterns, `cashflows.py`) — no derived table, nothing in
+  `rebuild_lots`. Dividends/interest/fees are performance, never flows;
+  journals between own accounts net out in combined views.
+- Account returns: daily-chained TWR with the end-of-day flow convention
+  (`r = (NLV − F) / NLV_prev`; zero/negative-base links skipped, never
+  sign-flipped) plus XIRR by bisection. Both bounded by balance-snapshot
+  coverage; TWR is the benchmark-comparable number for the future S&P
+  overlay (`returns.twr_index`, growth of $100).
 
 ## Open questions
 
@@ -144,3 +153,24 @@ were still free:
   value-derived multiplier).
 - The FutureOption API `multiplier` field is unusable (always "1.0"); use
   notional-value / display-factor.
+
+## Answered (from the 2026-07-05 balance-snapshot sync)
+
+- `/accounts/{n}/balance-snapshots` history depth (undocumented): full to
+  inception for the oldest account (2019-01-02); two accounts opened mid-2020
+  only have snapshots from 2021-03, and `/net-liq/history?time-back=all`
+  reaches no further back either — those return windows simply start there.
+- Money Movement `transaction-sub-type` is unreliable: credit interest,
+  dividends, and commission rebates are booked under "Deposit", margin
+  interest under "Withdrawal". Reliable discriminators: instrument-linked
+  rows (dividends, futures mark-to-market) carry a `symbol`, true external
+  flows never do; the rest classifies on description patterns, with
+  unmatched flow-claiming rows flagged `unclassified_flow` in `tastydb
+  status`. Survey of all 1,025 prod rows: externals are ACH
+  DEPOSIT/DISBURSEMENT, TRANSFER FROM (ACAT cash), Journal to/from account,
+  IRA FED WITHHOLDING.
+- Broker data hole: dormant account 1DA16486's funding (~$5k, pre-2020-06)
+  and emptying (2020-06-20) transactions are absent from the API entirely,
+  so its dollar PnL and the combined all-time TWR across that cliff are
+  distorted; bounded windows after it are clean. Do not fabricate synthetic
+  flows to patch this.
