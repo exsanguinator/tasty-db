@@ -19,6 +19,7 @@
     {% if lot.settlement_type %}<dt>Settlement</dt><dd>{{ lot.settlement_type.value }}</dd>{% endif %}
     {% if lot.open_order_id %}<dt>Opening order</dt><dd>{{ lot.open_order_id }}{% if siblings %} — sibling legs:
       {% for s in siblings %}<a href="/lot/{{ s.lot_id }}">{{ s.symbol }}</a>{{ ", " if not loop.last }}{% endfor %}{% endif %}</dd>{% endif %}
+    {% if lot.chain_id %}<dt>Roll chain</dt><dd><a href="/chain/{{ lot.chain_id }}">{{ lot.chain_id }}</a></dd>{% endif %}
     <dt>Broker txn</dt><dd>{{ lot.broker_txn_id }}</dd>
   </dl>
 </div>

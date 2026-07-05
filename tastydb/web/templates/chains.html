@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Chains · tasty-db{% endblock %}
+{% block content %}
+
+<div class="panel">
+  <h2>
+    Roll chains
+    <span class="sub">positions linked by roll orders — totals span the whole campaign; the date range picks which chains appear</span>
+    {% if underlying %}<span class="sub">underlying = {{ underlying }}</span>{% endif %}
+  </h2>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Chain</th><th>Account</th><th>Underlying</th>
+        <th>Started</th><th>Last activity</th>
+        <th class="num">Orders</th><th class="num">Rolls</th>
+        <th class="num">Days</th><th>Status</th>
+        <th class="num">Fees</th><th class="num">Realized PnL</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a href="/chain/{{ r.chain_id }}">{{ r.chain_id }}</a></td>
+        <td>{{ account_names.get(r.account_id, r.account_id) }}</td>
+        <td><a href="/underlying/{{ r.underlying_symbol }}?{{ filter_query }}">{{ r.underlying_symbol }}</a></td>
+        <td>{{ r.first_open.date() }}</td>
+        <td>{{ r.last_activity.date() }}</td>
+        <td class="num">{{ r.orders }}</td>
+        <td class="num">{{ r.rolls }}</td>
+        <td class="num">{{ r.days_in_trade }}d</td>
+        <td><span class="tag">{{ 'open' if r.is_open else 'closed' }}</span></td>
+        <td class="num">{{ r.fees | money }}</td>
+        <td class="num {{ r.realized_pnl | pnl_class }}">{{ r.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No roll chains in range — chains appear once a single order both closes an old contract and opens a new one.</div>
+  {% endif %}
+</div>
+
+{% endblock %}

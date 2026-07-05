@@ -39,6 +39,7 @@ from decimal import Decimal
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from .chains import assign_chains
 from .classify import BUY, CLOSE, NET, OPEN, PositionEvent, classify_all
 from .instruments import MetaProvider
 from .models import (
@@ -372,6 +373,14 @@ def rebuild_lots(
     as_of = min(today, max_seen.date()) if max_seen else today
     swept = matcher.expire_worthless(as_of, grace_days=grace_days)
 
+    # Roll-chain pass: link orders whose id closed old lots AND opened new ones
+    # (chains.assign_chains). Runs after the sweep so settlement closes inherit
+    # their lot's chain too.
+    session.flush()
+    all_lots = session.execute(select(Lot)).scalars().all()
+    all_closes = session.execute(select(LotClose)).scalars().all()
+    n_chains = assign_chains(all_lots, all_closes)
+
     session.commit()
 
     open_count = session.execute(
@@ -384,4 +393,5 @@ def rebuild_lots(
         "open_lots": open_count,
         "closes": close_count,
         "expired_worthless": swept,
+        "chains": n_chains,
     }

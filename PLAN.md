@@ -86,20 +86,18 @@ were still free:
 - [x] Per-strategy grouping by `open_order_id` (100% coverage on Trade txns;
       `ext-group-id` rejected — only 61%). Assignment deliveries have no
       order id and group per lot. (2026-07-04)
-- [ ] **Order-chain grouping (rolls).** A roll order closes the old strike
+- [x] **Order-chain grouping (rolls).** A roll order closes the old strike
       and opens the new one in a single order, so its order id appears both
       as `close_order_id` on the old lots' closes and as `open_order_id` on
-      the new lots — that shared id is the chain link. Walk it transitively
-      (open order → its closes' close_order_ids → lots those orders opened →
-      ...) to build a `chain_id` (root = the earliest opening order),
-      stamped on lots/closes during `process` like `open_order_id` is.
-      Dashboard: a Chains view (and `/chain/{id}` page) showing each roll
-      step, running credit/credit-received, total PnL across the whole
-      campaign, days in trade; strategies view links each strategy to its
-      chain. Watch out for: chains merging (one order rolling two positions),
-      partial rolls (only some quantity rolled), and same-order-different-
-      underlying legs (key chains per underlying to avoid cross-linking
-      pairs trades).
+      the new lots — that shared id is the chain link. `chains.assign_chains`
+      walks it transitively (union-find) during `process` and stamps
+      `chain_id` (root = the earliest opening order) on lots/closes.
+      Dashboard: Chains view + `/chain/{id}` page with per-step activity,
+      running credit, whole-campaign PnL, days in trade; strategies and lot
+      pages link to their chain. Handles chains merging, partial rolls, and
+      multi-underlying orders (chains keyed per account+underlying so pairs
+      trades never cross-link). Verified on prod: 346 chains, biggest an
+      IBIT campaign of 46 orders / 83 lots. (2026-07-04)
 - [ ] Wash-sale awareness for tax-oriented reports.
 - [ ] Export: CSV/parquet dump of `lot_closes` for spreadsheets.
 - [ ] Move to Postgres if the DB outgrows SQLite (schema already portable).

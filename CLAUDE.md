@@ -36,15 +36,21 @@ Supporting modules: `auth.py` (OAuth2 refresh-token → 15-min access tokens),
 `client.py` (REST, pagination, market data), `instruments.py`
 (multiplier/settlement-type cache with offline symbology fallbacks),
 `symbology.py` (OCC/futures symbol parsers), `analytics.py` (PnL aggregation,
-positions, strategies), `marks.py` (mark cache for unrealized PnL),
+positions, strategies), `chains.py` (roll-chain grouping + campaign
+analytics), `marks.py` (mark cache for unrealized PnL),
 `cli.py` (click), `web/` (FastAPI + Jinja dashboard, served by
 `tastydb dashboard`; read-only except POST /marks/refresh).
 
 Strategy grouping keys on `open_order_id` (the opening trade's broker
 order-id, present on 100% of Trade txns; NULL on Receive Deliver, so
-assignment deliveries group per lot). Derived-table schema changes need no
-migration: `db._ensure_derived_schema` drops `lots`/`lot_closes` on any
-column mismatch and `process` rebuilds them.
+assignment deliveries group per lot). Roll chains: a roll order's id appears
+as both `close_order_id` on the old lots' closes and `open_order_id` on the
+new lots; `chains.assign_chains` (end of `rebuild_lots`) union-finds those
+links per (account, underlying) and stamps `chain_id` = the root (earliest)
+opening order id. Only real chains (≥2 linked orders) get one; order-less
+closes (sweeps/settlements) inherit it through their lot. Derived-table
+schema changes need no migration: `db._ensure_derived_schema` drops
+`lots`/`lot_closes` on any column mismatch and `process` rebuilds them.
 
 ## Invariants — do not break
 

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Chain {{ chain_id }} · tasty-db{% endblock %}
+{% block content %}
+
+{% if not details %}
+<div class="panel"><div class="empty">Chain not found. <a href="/chains">All chains</a></div></div>
+{% endif %}
+
+{% for d in details %}
+<div class="panel">
+  <h2>
+    Chain {{ d.chain_id }} — {{ d.underlying_symbol }}
+    <span class="tag">{{ 'open' if d.is_open else 'closed' }}</span>
+  </h2>
+  <dl class="kv">
+    <dt>Account</dt><dd>{{ account_names.get(d.account_id, d.account_id) }}</dd>
+    <dt>Started</dt><dd>{{ d.first_open.date() }}</dd>
+    <dt>Last activity</dt><dd>{{ d.last_activity.date() }}</dd>
+    <dt>Days in trade</dt><dd>{{ d.days_in_trade }}{{ ' so far' if d.is_open }}</dd>
+    <dt>Orders</dt><dd>{{ d.orders }} ({{ d.rolls }} roll{{ 's' if d.rolls != 1 }})</dd>
+    <dt>Fees</dt><dd>{{ d.fees | money }}</dd>
+    <dt>Net cash</dt><dd class="{{ d.net_cash | pnl_class }}">{{ d.net_cash | signed_money }}{{ ' (open lots not yet bought back)' if d.is_open }}</dd>
+    <dt>Realized PnL</dt><dd class="{{ d.realized_pnl | pnl_class }}">{{ d.realized_pnl | signed_money }}</dd>
+    {% if d.is_open %}<dt>Still open</dt><dd>{{ d.open_quantity | qty }} across
+      {% for l in d.open_lots %}<a href="/lot/{{ l.lot_id }}">{{ l.symbol }}</a>{{ ", " if not loop.last }}{% endfor %}</dd>{% endif %}
+  </dl>
+</div>
+
+<div class="panel">
+  <h2>Steps <span class="sub">cash is credit received (+) / debit paid (−), fees included; running cash converges to campaign PnL as it closes</span></h2>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th><th>Date</th><th>Step</th><th>Order</th><th>Activity</th>
+        <th class="num">Cash</th><th class="num">Running cash</th><th class="num">Step PnL</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for st in d.steps %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ st.ts.date() }}</td>
+        <td><span class="tag">{{ st.kind }}</span></td>
+        <td>{{ st.order_id or '—' }}</td>
+        <td class="legs">
+          {% for c in st.closes %}closed {{ c.side.value }} {{ c.quantity_closed | qty }} × <a href="/lot/{{ c.lot_id }}">{{ c.symbol }}</a> @ {{ c.close_price | money }}<br>{% endfor %}
+          {% for l in st.opened %}opened {{ l.side.value }} {{ l.original_quantity | qty }} × <a href="/lot/{{ l.lot_id }}">{{ l.symbol }}</a> @ {{ l.open_price | money }}<br>{% endfor %}
+        </td>
+        <td class="num {{ st.cash | pnl_class }}">{{ st.cash | signed_money }}</td>
+        <td class="num {{ st.running_cash | pnl_class }}">{{ st.running_cash | signed_money }}</td>
+        <td class="num {{ st.realized_pnl | pnl_class }}">{{ st.realized_pnl | signed_money if st.closes else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+
+{% endblock %}

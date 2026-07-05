@@ -226,6 +226,7 @@ class StrategyRow:
     realized_pnl: Decimal
     close_reasons: list[str]
     lot_ids: list[int] = field(default_factory=list)
+    chain_id: int | None = None  # roll chain this strategy belongs to, if any
 
 
 def strategies(
@@ -271,6 +272,7 @@ def strategies(
             realized_pnl=sum((c.realized_pnl for c in group), Decimal("0")),
             close_reasons=sorted({c.close_reason.value for c in group}),
             lot_ids=sorted({c.lot_id for c in group}),
+            chain_id=next((c.chain_id for c in group if c.chain_id is not None), None),
         ))
     rows.sort(key=lambda r: r.close_date, reverse=True)
     return rows[:limit]

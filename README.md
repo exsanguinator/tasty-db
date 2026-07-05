@@ -81,6 +81,14 @@ tastydb dashboard              # local web dashboard at http://127.0.0.1:8787/
   of a spread entered as one order report combined PnL (order-id is present
   on 100% of Trade transactions; assignment deliveries have none and group
   per lot).
+- **Chains** (`/chains`, `/chain/{id}`) — roll campaigns. A roll order's id
+  appears both on the old lots' closes and on the new lots it opened; walking
+  those links transitively groups every roll of a position into one chain
+  with per-step cash flow, running credit, whole-campaign PnL, and days in
+  trade. Chains are keyed per account + underlying (a pairs order never
+  cross-links two campaigns), merge naturally when one order rolls two
+  positions, and follow partial rolls. Strategy rows and lot pages link to
+  their chain.
 - **Lot pages** (`/lot/{lot_id}`) — bookmarkable thanks to stable lot ids:
   open details, every close, sibling legs from the same order, and
   assignment-chain navigation via `linked_lot_id`.
@@ -104,7 +112,9 @@ whole app is local.
 - **`lot_closes`** (CloseTable) — one row per close event per lot (a close
   spanning N lots produces N rows). Stable natural key:
   `(lot_id, broker_close_txn_id)`; the `close_id` surrogate is rebuild-scoped.
-  Fees and PnL are quantized (4dp) at write time. `realized_pnl` =
+  Fees and PnL are quantized (4dp) at write time. `chain_id` on lots/closes
+  is the roll-chain key: the root (earliest) opening order id of the campaign,
+  NULL unless the position was actually rolled. `realized_pnl` =
   `(close_price − open_price) × quantity_closed × multiplier × side_sign − fees`
   with open/close fees allocated pro-rata. `close_reason` ∈ trade /
   expiration / assignment / exercise / cash_settlement. `linked_lot_id` points

@@ -26,6 +26,7 @@ from ..analytics import (
     strategies,
 )
 from ..auth import AuthError
+from ..chains import chain_detail, chains
 from ..client import TastyClient
 from ..config import Config
 from ..db import init_db, make_engine, make_session_factory
@@ -195,6 +196,19 @@ def create_app(config: Config) -> FastAPI:
         with session_factory() as session:
             rows = strategies(session, **f, underlying=underlying, limit=200)
         return render(request, "strategies.html", rows=rows, underlying=underlying)
+
+    @app.get("/chains")
+    def chains_view(request: Request, underlying: str | None = None):
+        f = filters_from(request)
+        with session_factory() as session:
+            rows = chains(session, **f, underlying=underlying, limit=200)
+        return render(request, "chains.html", rows=rows, underlying=underlying)
+
+    @app.get("/chain/{chain_id}")
+    def chain_view(request: Request, chain_id: int):
+        with session_factory() as session:
+            details = chain_detail(session, chain_id)
+        return render(request, "chain.html", chain_id=chain_id, details=details)
 
     @app.get("/lot/{lot_id}")
     def lot_view(request: Request, lot_id: int):

@@ -151,6 +151,10 @@ class Lot(Base):
     # broker order id of the opening trade; legs of a multi-leg order share it
     # (strategy grouping key). NULL for deliveries/sweeps (no originating order).
     open_order_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    # roll-chain id: root (earliest) opening order id of the campaign this lot
+    # belongs to, stamped by chains.assign_chains during `process`. NULL unless
+    # the lot is linked to at least one other order by a roll.
+    chain_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
 
     closes: Mapped[list["LotClose"]] = relationship(
         back_populates="lot", foreign_keys="LotClose.lot_id"
@@ -193,6 +197,7 @@ class LotClose(Base):
     linked_lot_id: Mapped[int | None] = mapped_column(ForeignKey("lots.lot_id"))
     open_order_id: Mapped[int | None] = mapped_column(BigInteger, index=True)  # from the lot
     close_order_id: Mapped[int | None] = mapped_column(BigInteger)  # from the closing txn
+    chain_id: Mapped[int | None] = mapped_column(BigInteger, index=True)  # from the lot
 
     lot: Mapped[Lot] = relationship(back_populates="closes", foreign_keys=[lot_id])
     linked_lot: Mapped[Lot | None] = relationship(foreign_keys=[linked_lot_id])

@@ -13,7 +13,7 @@
     <thead>
       <tr>
         <th>Account</th><th>Underlying</th><th>Legs</th>
-        <th>Opened</th><th>Closed</th><th>Reasons</th>
+        <th>Opened</th><th>Closed</th><th>Reasons</th><th>Chain</th>
         <th class="num">Realized PnL</th>
       </tr>
     </thead>
@@ -29,6 +29,7 @@
         <td>{{ s.open_date.date() }}</td>
         <td>{{ s.close_date.date() }}</td>
         <td>{% for r in s.close_reasons %}<span class="tag">{{ r }}</span> {% endfor %}</td>
+        <td>{% if s.chain_id %}<a href="/chain/{{ s.chain_id }}">{{ s.chain_id }}</a>{% endif %}</td>
         <td class="num {{ s.realized_pnl | pnl_class }}">{{ s.realized_pnl | signed_money }}</td>
       </tr>
       {% endfor %}

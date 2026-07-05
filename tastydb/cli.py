@@ -162,7 +162,8 @@ def process(app: App, method: str | None, offline: bool):
     click.echo(
         f"{stats['transactions']} transactions -> {stats['events']} events, "
         f"{stats['closes']} closes, {stats['open_lots']} open lots "
-        f"({stats['expired_worthless']} swept as worthless expiration)"
+        f"({stats['expired_worthless']} swept as worthless expiration), "
+        f"{stats['chains']} roll chains"
     )
 
 
