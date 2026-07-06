@@ -238,6 +238,10 @@ def returns(app: App, start, end, account: str | None):
         rows = [period_returns(session, a, s, e) for a in numbers]
         if len(numbers) > 1:
             rows.append(period_returns(session, None, s, e))
+        nicknames = {
+            a.account_number: a.nickname or a.account_number
+            for a in session.execute(select(Account)).scalars()
+        }
 
     header = (
         f"{'account':<12} {'from':>10} {'to':>10} {'start NLV':>13} {'end NLV':>13} "
@@ -246,7 +250,7 @@ def returns(app: App, start, end, account: str | None):
     click.echo(header)
     click.echo("-" * len(header))
     for r in rows:
-        label = r.account or "COMBINED"
+        label = (nicknames.get(r.account, r.account) if r.account else "COMBINED")[:12]
         if r.days == 0:
             click.echo(f"{label:<12} not enough snapshots in range")
             continue
