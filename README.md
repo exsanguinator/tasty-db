@@ -1,198 +1,178 @@
 # tasty-db
 
-Syncs your TastyTrade transaction history into a local SQLite database
-(SQLAlchemy, so the schema ports to Postgres unchanged) and derives lot-based
-realized PnL for stocks, equity options, futures, and future options.
+**Your TastyTrade trading history, on your own machine, with real answers about
+performance.**
 
-## Confirmed API facts (developer.tastytrade.com, checked 2026-07)
+tasty-db pulls your complete TastyTrade transaction history into a local SQLite
+database and turns it into the reports the broker doesn't give you:
 
-- **Auth is OAuth2 only.** Session-token login is not offered to API users.
-  Personal flow: create an OAuth application + personal grant at
-  my.tastytrade.com → *Manage → My Profile → API → OAuth Applications*. The
-  grant gives a long-lived **refresh token**; 15-minute access tokens are
-  minted via `POST /oauth/token` (`grant_type=refresh_token`, `refresh_token`,
-  `client_secret`).
-- **Transactions:** `GET /accounts/{account_number}/transactions`, paginated
-  (`page-offset`/`per-page` up to 2000, `sort=Asc`, `start-date`), unique
-  integer `id` per transaction (our dedupe key). Fee fields each carry a
-  `*-effect` of `Debit`/`Credit`.
-- **Settlement type:** `settlement-type: "Physical" | "Cash"` on
-  `EquityOption` (`GET /instruments/equity-options/{symbol}`). Real
-  `FutureOption` payloads say `"Future"` instead (delivers the future) — the
-  nested `future-option-product.cash-settled` boolean is the reliable flag.
-  Multipliers: `shares-per-contract` (equity options), `notional-multiplier`
-  (futures); for future options the documented `multiplier` field is always
-  `"1.0"` in practice — the true contract multiplier is
-  `notional-value / display-factor` (verified across 23 CME products).
-- **Cash settlement amounts come from the broker, not from quotes.**
-  Confirmed in real payloads: a cash-settled expiry posts as **two**
-  `Receive Deliver` transactions per leg — `Cash Settled Exercise` /
-  `Cash Settled Assignment` whose `value` is the actual settlement cash
-  (its `price` field is the strike, not a close price), plus a redundant
-  `Exercise`/`Assignment` removal with value 0 that the classifier skips.
-  We derive the effective close price from the settlement `value` and never
-  compute it from price data. Any transaction shape not recognized is flagged
-  `unsupported` and shown by `tastydb status` rather than silently skipped.
+- **Realized PnL by lot** — every open matched to its close (FIFO or LIFO) for
+  stocks, equity options, futures, and futures options, with fees allocated and
+  expirations, assignments, exercises, and cash settlements handled correctly.
+- **Strategy & roll-chain views** — spreads entered as one order report as one
+  trade, and rolled positions are stitched into whole campaigns with running
+  credit and total PnL.
+- **Account-level returns** — time-weighted return (TWR) and money-weighted
+  return (XIRR) computed from daily net-liq snapshots and your actual deposits
+  and withdrawals, so you can compare yourself to a benchmark honestly.
+- **A local web dashboard** to browse all of it — no cloud, no account linking,
+  everything stays on your machine.
 
-## Setup
+Syncing is idempotent and incremental: raw broker transactions are the source
+of truth, and all derived tables can be rebuilt from them at any time.
+
+## Installation
+
+Requires Python 3.11+.
 
 ```sh
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-
-export TT_CLIENT_SECRET=...   # from your OAuth application
-export TT_REFRESH_TOKEN=...   # from your personal grant
-# optional: TT_CLIENT_ID, TT_ENV=sandbox, TASTYDB_DB_URL, TASTYDB_MATCH_METHOD=lifo
+git clone https://github.com/exsanguinator/tasty-db
+cd tasty-db
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
 ```
 
-Instead of exporting, you can put the same `KEY=VALUE` lines in a `.env` file
-in the working directory (or pass `--env-file path`). Real environment
-variables always take precedence, and `.env` is gitignored.
+The `tastydb` command is installed into the venv (`.venv/bin/tastydb`, or just
+`tastydb` after activating the venv).
 
-Each environment gets its own database by default so sandbox testing never
-touches prod data: `tastydb.sqlite3` (prod) vs `tastydb-sandbox.sqlite3`
-(`--sandbox` / `TT_ENV=sandbox`). An explicit `--db` or `TASTYDB_DB_URL`
-overrides both, in which case switching environments shares that one database.
+## Setup: API credentials
 
-## Usage
+TastyTrade's API uses OAuth2. One-time setup:
+
+1. Log in at [my.tastytrade.com](https://my.tastytrade.com) and go to
+   **Manage → My Profile → API → OAuth Applications**.
+2. Create an OAuth application — this gives you a **client secret**.
+3. Create a **personal grant** for it — this gives you a long-lived
+   **refresh token**.
+
+Then provide both to tasty-db, either as environment variables:
 
 ```sh
-tastydb sync --backfill        # full history, all accounts (idempotent)
-tastydb sync                   # incremental (re-fetches a 7-day overlap; dedupe by txn id)
-tastydb process                # classify + match into lots/closes
-tastydb pnl --start 2026-01-01 --end 2026-06-30
-tastydb pnl --underlying SPX --group-by close_reason
-tastydb returns --start 2026-01-01   # account-level TWR / XIRR from NLV + cash flows
-tastydb status                 # ingest counts + anything needing attention
-tastydb dashboard              # local web dashboard at http://127.0.0.1:8787/
+export TT_CLIENT_SECRET=...
+export TT_REFRESH_TOKEN=...
 ```
 
-## Web dashboard
+…or in a `.env` file in the working directory (gitignored; real environment
+variables take precedence):
 
-`tastydb dashboard` serves a local, read-only web UI over the same database:
+```
+TT_CLIENT_SECRET=...
+TT_REFRESH_TOKEN=...
+```
 
-- **Overview** — realized PnL / fees / closes cards, cumulative realized PnL
-  chart, top and bottom underlyings, PnL by close reason.
-- **Closes** — browse every realized close (filter by account/date range,
-  toggle group-by-underlying), each row linking to its lot.
-- **Positions** — open lots aggregated per symbol with cost basis and
-  **unrealized PnL** from cached marks; the *Refresh marks* button pulls
-  fresh quotes via `GET /market-data/by-type` (batched, ≤100 symbols/request).
-  This is the dashboard's only write — sync/process stay in the CLI.
-- **Strategies** — closes grouped by their **opening order id**, so the legs
-  of a spread entered as one order report combined PnL (order-id is present
-  on 100% of Trade transactions; assignment deliveries have none and group
-  per lot).
-- **Chains** (`/chains`, `/chain/{id}`) — roll campaigns. A roll order's id
-  appears both on the old lots' closes and on the new lots it opened; walking
-  those links transitively groups every roll of a position into one chain
-  with per-step cash flow, running credit, whole-campaign PnL, and days in
-  trade. Chains are keyed per account + underlying (a pairs order never
-  cross-links two campaigns), merge naturally when one order rolls two
-  positions, and follow partial rolls. Strategy rows and lot pages link to
-  their chain.
-- **Performance** (`/performance`) — account-level returns from EOD
-  net-liq snapshots and money flow: NLV chart, time-weighted growth-of-$100
-  chart (flow-neutral, benchmark-comparable), period $PnL
-  (`NLV_end − NLV_start − net external flows`), total + annualized TWR,
-  XIRR, and the external cash-flow table. Deposits/withdrawals/journals/
-  withholding are classified from Money Movement descriptions (sub-types
-  lie: interest and dividends appear under "Deposit", margin interest under
-  "Withdrawal"); journals between your own accounts cancel in the combined
-  view. Unrecognized flow-like rows are flagged in `tastydb status`.
-- **Lot pages** (`/lot/{lot_id}`) — bookmarkable thanks to stable lot ids:
-  open details, every close, sibling legs from the same order, and
-  assignment-chain navigation via `linked_lot_id`.
+Optional settings: `TT_ENV=sandbox` (or `--sandbox`) to use TastyTrade's cert
+environment, `TASTYDB_DB_URL` / `--db` to point at a specific database, and
+`TASTYDB_MATCH_METHOD=lifo` to match lots LIFO instead of FIFO. Each
+environment gets its own database file by default (`tastydb.sqlite3` for prod,
+`tastydb-sandbox.sqlite3` for sandbox), so experimenting never touches real
+data. Credentials are never written to the database or the repo.
 
-Every view accepts account + date-range filters (accounts shown by nickname).
-Light/dark theme follows the OS. Chart.js is vendored — no CDN calls; the
-whole app is local.
-
-## Data model
-
-- **`raw_transactions`** — one row per broker transaction (PK = TastyTrade's
-  transaction id), full JSON payload plus parsed columns and a
-  `processing_status`. Ingest is separate from classification, so matching
-  bugs never require re-fetching.
-- **`lots`** (OpenTable) — one row per opening execution. Partial closes
-  decrement `remaining_quantity`; the row survives for cost-basis history
-  ("open lots" = `remaining_quantity > 0`). `settlement_type` is stamped at
-  open time from instrument metadata. `lot_id` IS the opening broker
-  transaction id, so lot identity is stable across `process` rebuilds and
-  safe for external references.
-- **`lot_closes`** (CloseTable) — one row per close event per lot (a close
-  spanning N lots produces N rows). Stable natural key:
-  `(lot_id, broker_close_txn_id)`; the `close_id` surrogate is rebuild-scoped.
-  Fees and PnL are quantized (4dp) at write time. `chain_id` on lots/closes
-  is the roll-chain key: the root (earliest) opening order id of the campaign,
-  NULL unless the position was actually rolled. `realized_pnl` =
-  `(close_price − open_price) × quantity_closed × multiplier × side_sign − fees`
-  with open/close fees allocated pro-rata. `close_reason` ∈ trade /
-  expiration / assignment / exercise / cash_settlement. `linked_lot_id` points
-  at the stock/futures lot opened by a physical assignment/exercise;
-  `broker_close_txn_id` is NULL for synthetic worthless-expiration closes.
-- **`accounts`** — cached account metadata (nickname, type), refreshed on
-  every sync so `tastydb accounts` works offline.
-- **`balance_snapshots`** — EOD net-liq + cash balance per account per day,
-  fetched during `tastydb sync` from `/accounts/{n}/balance-snapshots`
-  (history reaches back to account inception for most accounts; gaps older
-  than the endpoint's history are backfilled from `/net-liq/history` daily
-  closes, marked `source='netliq_history'`, which never overwrite real
-  snapshots). Fetched data like `raw_transactions` — survives `process`.
-- **`instrument_meta`** — cached multiplier/settlement metadata per symbol.
-  `source` records provenance: `api` (instruments endpoints, with the
-  future-option multiplier computed from notional-value/display-factor),
-  `fallback` (symbology parsing + built-in contract tables; re-derived on
-  every run so fixes propagate), `derived` (multiplier computed from a broker
-  transaction's value), or `manual` — set `source='manual'` by hand on a row
-  to pin its values against any automatic recomputation.
-
-### Expiration paths (checked in this order)
-
-1. **Cash-settled** (`Receive Deliver` with a cash-settled sub-type): closed at
-   the broker-reported settlement cash, `reason=cash_settlement`, no linked lot.
-2. **Physical assignment/exercise**: the option removal closes the lot at 0
-   (premium fully realized) and the delivery leg opens/closes the stock or
-   futures lot at the strike; the two are linked via `linked_lot_id`, and stock
-   closed by a delivery leg inherits `reason=assignment`/`exercise`.
-3. **Worthless expiration**: normally a broker `Expiration` transaction; a
-   post-processing sweep also closes any lot whose expiration passed with no
-   transaction (grace window of 4 days past expiry, never past the newest
-   synced data), at price 0 with no broker txn id.
-
-## Design notes & caveats
-
-- `tastydb process` **rebuilds** `lots`/`lot_closes` from scratch on every
-  run. Raw transactions are the source of truth and matching is deterministic,
-  so reprocessing after a rule fix or an overnight fee reconciliation is always
-  correct. Lot ids are stable anyway (they're the opening broker txn ids);
-  only `close_id` is rebuild-scoped.
-- Matching is per **(account, exact symbol, side)** — exact symbol rather than
-  the spec's underlying+asset_type, because option symbols encode
-  strike/expiration and closes must never cross contracts. FIFO within the
-  group by default, LIFO via `--method lifo` / `TASTYDB_MATCH_METHOD`.
-- Plain `Buy`/`Sell` actions (futures) net against the opposite side first and
-  open the remainder, so crossing through zero splits correctly.
-- Transactions with `reverses-id` and their targets are excluded as
-  reversal pairs.
-- **Not modeled:** stock splits, symbol changes, mergers, ACAT transfers
-  (flagged `unsupported` in `status`), dividends/interest (ignored — this DB
-  is trade PnL only), and futures daily mark-to-market cash flows (futures PnL
-  is computed trade-price-to-trade-price instead, which sums to the same total
-  per closed lot).
-- If a close arrives with no matching open lot (backfill started
-  mid-position), a warning is logged and a lot is opened in the trade's
-  direction so subsequent history stays consistent.
-- **Returns math**: TWR chains daily links `r = (NLV_t − flows) / NLV_prev`
-  (end-of-day flow convention; exact to within a day on daily snapshots).
-  Links with a zero/negative base — freshly funded accounts, data-gap
-  anomalies — are skipped rather than sign-flipping the chain. XIRR is
-  bisection on NPV over dated investor flows. Broker data holes exist: one
-  dormant account's funding/emptying transactions were never in the API's
-  history, so its dollar PnL (and the combined all-time TWR through that
-  cliff) is distorted; date-bounded windows after the hole are clean.
-
-## Tests
+## Quick start
 
 ```sh
-.venv/bin/python -m pytest tests/ -q
+tastydb sync --backfill   # one-time: pull full history for all accounts
+tastydb process           # build lots and realized closes from the raw data
+tastydb dashboard         # open the web dashboard at http://127.0.0.1:8787/
 ```
+
+Day to day:
+
+```sh
+tastydb sync              # incremental pull (safe to run anytime; dedupes)
+tastydb process           # rebuild derived tables after a sync
+tastydb status            # health check: counts + anything needing attention
+```
+
+`sync` also records an end-of-day net-liq snapshot per account, which is what
+powers the returns/performance features — so a periodic `sync` (e.g. a nightly
+cron job) keeps both your trade history and your performance data current.
+
+## Typical use cases
+
+### "How much did I actually make on my trades?" — realized PnL
+
+Lot-based, fee-inclusive realized PnL from actual fills:
+
+```sh
+tastydb pnl --start 2026-01-01 --end 2026-06-30   # a date window
+tastydb pnl --underlying SPX                      # one underlying
+tastydb pnl --group-by close_reason               # trade vs expiry vs assignment...
+```
+
+This answers the *trading skill* question: for every position you closed, what
+did you make or lose? Expirations, assignments, exercises, and cash-settled
+index options are all booked at broker-reported values. In the dashboard, the
+**Overview**, **Closes**, **Strategies**, and **Chains** pages give the same
+numbers with charts, filters, and drill-down to individual lots.
+
+### "How is my account actually performing?" — net-liq returns
+
+Realized trade PnL deliberately excludes dividends, interest, fees on cash,
+and unrealized moves. For whole-account performance, use the returns view,
+which works from daily net-liq and your external cash flows instead:
+
+```sh
+tastydb returns --start 2026-01-01                # TWR + XIRR per account
+```
+
+- **Period $PnL** = ending net-liq − starting net-liq − net deposits/withdrawals.
+- **TWR** (time-weighted return) removes the effect of your deposit/withdrawal
+  timing — this is the number to compare against SPY.
+- **XIRR** (money-weighted return) is the annualized return on *your* dollars,
+  timing included.
+
+Deposits, withdrawals, journals, and tax withholding are classified from the
+raw Money Movement history; transfers between your own accounts cancel out in
+the combined view. The dashboard's **Performance** page shows the net-liq
+chart, a flow-neutral growth-of-$100 chart, and the full cash-flow table.
+
+### Comparing the two
+
+If your realized PnL is great but your TWR is flat, the difference is living
+somewhere — open positions moving against you, cash drag, or costs outside
+trade fills. Running both views over the same window is the fastest way to see
+where.
+
+## The web dashboard
+
+`tastydb dashboard` serves a read-only local web UI over the same database:
+
+| Page | What it shows |
+|---|---|
+| **Overview** | Realized PnL / fees, cumulative PnL chart, best & worst underlyings |
+| **Closes** | Every realized close, filterable, linked to its lot |
+| **Positions** | Open lots with cost basis and unrealized PnL from cached marks |
+| **Strategies** | Multi-leg orders (spreads, condors) reported as single trades |
+| **Chains** | Roll campaigns: every roll of a position as one story with total PnL |
+| **Performance** | Net-liq chart, growth-of-$100, TWR/XIRR, cash-flow table |
+
+Every view filters by account and date range. The only network call the
+dashboard ever makes is the optional *Refresh marks* button (live quotes for
+unrealized PnL) — everything else is served from your local database, with
+charting vendored (no CDN).
+
+## How it works (in one paragraph)
+
+Three stages: **ingest** stores every raw broker transaction verbatim, keyed
+by transaction id (idempotent, updated in place if the broker reconciles fees
+overnight); **classify** turns raw rows into typed position events, flagging
+anything unrecognized as `unsupported` rather than silently dropping it (see
+`tastydb status`); **match** replays those events in order into lots and
+closes. `tastydb process` rebuilds the derived tables from scratch every run —
+raw data is the source of truth, so a rule fix or re-sync is never a
+migration, just a reprocess. Lot ids are the opening broker transaction ids,
+so they stay stable across rebuilds.
+
+Known limits: stock splits, symbol changes, mergers, and ACAT transfers are
+flagged rather than modeled, and realized PnL intentionally excludes
+dividends/interest (those show up in the account-level returns view instead).
+
+## Development
+
+```sh
+.venv/bin/python -m pytest tests/ -q   # fast, fully offline test suite
+```
+
+Tests never hit the network — they replay synthetic payloads shaped like real
+API responses. See `CLAUDE.md` for architecture notes and invariants, and
+`PLAN.md` for the roadmap.
