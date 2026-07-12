@@ -177,6 +177,10 @@ dashboard ever makes is the optional *Refresh marks* button (live quotes for
 unrealized PnL) — everything else is served from your local database, with
 charting vendored (no CDN).
 
+### Web Dashboard Sample Overview
+
+<img width="2518" height="1560" alt="image" src="https://github.com/user-attachments/assets/00c5d0d5-a512-4a17-b212-53b07f7d9866" />
+
 ## How it works (in one paragraph)
 
 Three stages: **ingest** stores every raw broker transaction verbatim, keyed
