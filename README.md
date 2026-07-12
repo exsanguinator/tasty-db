@@ -99,6 +99,21 @@ tastydb pnl --underlying SPX                      # one underlying
 tastydb pnl --group-by close_reason               # trade vs expiry vs assignment...
 ```
 
+Sample output:
+
+```
+$ tastydb pnl --start 2026-01-01 --end 2026-06-30
+underlying            closes        qty         fees   realized pnl
+------------------------------------------------------------------
+SPX                       42      96.00       312.48        8441.25
+/ES                       11      14.00        59.22       -1230.00
+AAPL                       6     400.00         4.12         962.40
+/MES                       9      18.00        31.86         415.50
+TLT                        5      25.00         9.85        -212.55
+------------------------------------------------------------------
+TOTAL                                          417.53        8376.60
+```
+
 This answers the *trading skill* question: for every position you closed, what
 did you make or lose? Expirations, assignments, exercises, and cash-settled
 index options are all booked at broker-reported values. In the dashboard, the
@@ -113,6 +128,17 @@ which works from daily net-liq and your external cash flows instead:
 
 ```sh
 tastydb returns --start 2026-01-01                # TWR + XIRR per account
+```
+
+Sample output:
+
+```
+$ tastydb returns --start 2026-01-01
+account            from         to     start NLV       end NLV    net flows          PnL        TWR   TWR ann.      XIRR
+-------------------------------------------------------------------------------------------------------------------------
+Roth IRA     2026-01-02 2026-07-10      84210.55      92873.10      7000.00      1662.55      1.98%      4.03%      3.87%
+Taxable      2026-01-02 2026-07-10     152340.20     148990.75    -10000.00      6650.55      4.42%      9.12%      8.95%
+COMBINED     2026-01-02 2026-07-10     236550.75     241863.85     -3000.00      8313.10      3.55%      7.28%      7.02%
 ```
 
 - **Period $PnL** = ending net-liq − starting net-liq − net deposits/withdrawals.
