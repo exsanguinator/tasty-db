@@ -36,9 +36,11 @@
     {% endfor %}
     <button type="submit">Apply</button>
     <span class="presets">
+      <a href="{{ request.url.path }}{{ '?account=' ~ filters.account if filters.account }}">All</a>
       <a href="{{ request.url.path }}?start={{ today.replace(month=1, day=1).isoformat() }}{{ '&account=' ~ filters.account if filters.account }}">YTD</a>
       <a href="{{ request.url.path }}?start={{ today.replace(year=today.year - 1).isoformat() }}{{ '&account=' ~ filters.account if filters.account }}">1Y</a>
-      <a href="{{ request.url.path }}{{ '?account=' ~ filters.account if filters.account }}">All</a>
+      <a href="{{ request.url.path }}?start={{ (today - timedelta(days=30)).isoformat() }}{{ '&account=' ~ filters.account if filters.account }}">1M</a>
+      <a href="{{ request.url.path }}?start={{ (today - timedelta(days=7)).isoformat() }}{{ '&account=' ~ filters.account if filters.account }}">1W</a>
     </span>
   </form>
   {% if message %}<div class="notice">{{ message }}</div>{% endif %}

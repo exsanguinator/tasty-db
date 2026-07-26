@@ -7,7 +7,7 @@ for unrealized PnL. Sync/process stay in the CLI.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlencode
@@ -96,6 +96,7 @@ def create_app(config: Config) -> FastAPI:
     templates.env.filters["pnl_class"] = _pnl_class
     templates.env.filters["qty"] = _qty
     templates.env.filters["pct"] = _pct
+    templates.env.globals["timedelta"] = timedelta
 
     def filters_from(request: Request) -> dict:
         params = request.query_params
