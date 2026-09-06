@@ -120,6 +120,35 @@ index options are all booked at broker-reported values. In the dashboard, the
 **Overview**, **Closes**, **Strategies**, and **Chains** pages give the same
 numbers with charts, filters, and drill-down to individual lots.
 
+### "How much premium have I collected?" — credits
+
+A simple cash-flow view: every sell (to open or to close) is a credit, every
+buy (to open or to close) is a debit, summed over a date range and broken
+down by underlying. Unlike `pnl`, this isn't lot-matched — it's raw cash in
+vs. cash out from trading, including cash-settled index option expirations
+(e.g. SPX, XSP):
+
+```sh
+tastydb credits --start 2026-01-01 --end 2026-06-30   # a date window
+tastydb credits --underlying SPX                      # one underlying
+```
+
+Sample output:
+
+```
+$ tastydb credits --start 2026-01-01 --end 2026-06-30
+underlying            trades        credits
+-------------------------------------------
+SPX                      184       38550.00
+AAPL                      12        1620.00
+/ES                        6        -840.00
+-------------------------------------------
+TOTAL                                39330.00
+```
+
+The dashboard's **Credits** page shows the same total and per-underlying
+breakdown with the usual account/date-range filters.
+
 ### "How is my account actually performing?" — net-liq returns
 
 Realized trade PnL deliberately excludes dividends, interest, fees on cash,
@@ -171,6 +200,7 @@ where.
 | **Strategies** | Multi-leg orders (spreads, condors) reported as single trades |
 | **Chains** | Roll campaigns: every roll of a position as one story with total PnL |
 | **Performance** | Net-liq chart, growth-of-$100, TWR/XIRR, cash-flow table |
+| **Credits** | Credits collected (sells minus buys) by underlying, Total + breakdown |
 
 Every view filters by account and date range. The only network call the
 dashboard ever makes is the optional *Refresh marks* button (live quotes for
