@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Credits · tasty-db{% endblock %}
+{% block content %}
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Credits collected</div>
+    <div class="value {{ total | pnl_class }}">{{ total | signed_money }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Trades</div>
+    <div class="value">{{ trades }}</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>By underlying</h2>
+  <table>
+    <thead><tr><th>Underlying</th><th class="num">Trades</th><th class="num">Credits</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a href="/underlying/{{ r.group }}?{{ filter_query }}">{{ r.group }}</a></td>
+        <td class="num">{{ r.trades }}</td>
+        <td class="num {{ r.credits | pnl_class }}">{{ r.credits | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

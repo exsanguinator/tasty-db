@@ -12,11 +12,15 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from .marks import unrealized_pnl
-from .models import AssetType, Lot, LotClose, Mark, Side
+from .models import AssetType, Lot, LotClose, Mark, ProcessingStatus, RawTransaction, Side
+
+_CREDIT_ACTIONS = (
+    "buy to open", "sell to open", "buy to close", "sell to close", "buy", "sell",
+)
 
 
 @dataclass
@@ -72,6 +76,57 @@ def realized_pnl(
             realized_pnl=_dec(p),
         )
         for g, n, q, f, p in session.execute(stmt)
+    ]
+
+
+@dataclass
+class CreditRow:
+    group: str  # underlying symbol
+    trades: int
+    credits: Decimal
+
+
+def credits_collected(
+    session: Session,
+    start: date | None = None,
+    end: date | None = None,
+    underlying: str | None = None,
+    account: str | None = None,
+) -> list[CreditRow]:
+    """Cash collected selling minus cash paid buying, from raw trade actions
+    (Trade rows, assignment/exercise delivery legs, and cash-settled
+    exercise/assignment rows), grouped by underlying. Gross of fees."""
+    signed_value = case(
+        (RawTransaction.value_effect == "Debit", -RawTransaction.value),
+        else_=RawTransaction.value,
+    )
+    stmt = select(
+        RawTransaction.underlying_symbol,
+        func.count(),
+        func.sum(signed_value),
+    ).where(
+        func.lower(RawTransaction.transaction_type).in_(("trade", "receive deliver")),
+        RawTransaction.processing_status.notin_(
+            (ProcessingStatus.reversed, ProcessingStatus.error)
+        ),
+        (
+            func.lower(RawTransaction.action).in_(_CREDIT_ACTIONS)
+            | func.lower(RawTransaction.transaction_sub_type).contains("cash settled")
+        ),
+    )
+    if start is not None:
+        stmt = stmt.where(RawTransaction.executed_at >= datetime.combine(start, time.min))
+    if end is not None:
+        stmt = stmt.where(RawTransaction.executed_at < datetime.combine(end + timedelta(days=1), time.min))
+    if underlying is not None:
+        stmt = stmt.where(RawTransaction.underlying_symbol == underlying)
+    if account is not None:
+        stmt = stmt.where(RawTransaction.account_number == account)
+    stmt = stmt.group_by(RawTransaction.underlying_symbol).order_by(func.sum(signed_value).desc())
+
+    return [
+        CreditRow(group=group, trades=n, credits=Decimal(str(total)) if total is not None else Decimal("0"))
+        for group, n, total in session.execute(stmt)
     ]
 
 

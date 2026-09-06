@@ -5,6 +5,7 @@
     tastydb sync [--backfill] [--since D]  pull transactions into raw storage
     tastydb process [--method lifo]        classify + match into lots/closes
     tastydb pnl --start D --end D          realized PnL report
+    tastydb credits --start D --end D      credits collected report
     tastydb status                         ingest/processing overview
 """
 
@@ -18,7 +19,7 @@ from decimal import Decimal
 import click
 from sqlalchemy import func, select
 
-from .analytics import realized_pnl
+from .analytics import credits_collected, realized_pnl
 from .auth import AuthError
 from .cashflows import unclassified_flows
 from .client import ApiError, TastyClient
@@ -212,6 +213,36 @@ def pnl(app: App, start, end, underlying: str | None, account: str | None, group
         total_pnl += row.realized_pnl
     click.echo("-" * len(header))
     click.echo(f"{'TOTAL':<20} {'':>7} {'':>10} {total_fees:>12.2f} {total_pnl:>14.2f}")
+
+
+@main.command()
+@click.option("--start", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
+@click.option("--end", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
+@click.option("--underlying", default=None, help="Filter to one underlying symbol")
+@click.option("--account", default=None, help="Filter to one account")
+@click.pass_obj
+def credits(app: App, start, end, underlying: str | None, account: str | None):
+    """Credits collected (sells minus buys) over a date range, by underlying."""
+    with app.session_factory() as session:
+        rows = credits_collected(
+            session,
+            start=start.date() if start else None,
+            end=end.date() if end else None,
+            underlying=underlying,
+            account=account,
+        )
+    if not rows:
+        click.echo("no trades in range")
+        return
+    header = f"{'underlying':<20} {'trades':>7} {'credits':>14}"
+    click.echo(header)
+    click.echo("-" * len(header))
+    total_credits = Decimal("0")
+    for row in rows:
+        click.echo(f"{row.group:<20} {row.trades:>7} {row.credits:>14.2f}")
+        total_credits += row.credits
+    click.echo("-" * len(header))
+    click.echo(f"{'TOTAL':<20} {'':>7} {total_credits:>14.2f}")
 
 
 @main.command()
