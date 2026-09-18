@@ -86,25 +86,16 @@ class CreditRow:
     credits: Decimal
 
 
-def credits_collected(
-    session: Session,
-    start: date | None = None,
-    end: date | None = None,
-    underlying: str | None = None,
-    account: str | None = None,
-) -> list[CreditRow]:
-    """Cash collected selling minus cash paid buying, from raw trade actions
-    (Trade rows, assignment/exercise delivery legs, and cash-settled
-    exercise/assignment rows), grouped by underlying. Gross of fees."""
-    signed_value = case(
+def _credit_signed_value():
+    return case(
         (RawTransaction.value_effect == "Debit", -RawTransaction.value),
         else_=RawTransaction.value,
     )
-    stmt = select(
-        RawTransaction.underlying_symbol,
-        func.count(),
-        func.sum(signed_value),
-    ).where(
+
+
+def _credit_filters(stmt, start, end, underlying, account):
+    """Restrict to credit-bearing trade actions (see `credits_collected`)."""
+    stmt = stmt.where(
         func.lower(RawTransaction.transaction_type).in_(("trade", "receive deliver")),
         RawTransaction.processing_status.notin_(
             (ProcessingStatus.reversed, ProcessingStatus.error)
@@ -122,12 +113,55 @@ def credits_collected(
         stmt = stmt.where(RawTransaction.underlying_symbol == underlying)
     if account is not None:
         stmt = stmt.where(RawTransaction.account_number == account)
-    stmt = stmt.group_by(RawTransaction.underlying_symbol).order_by(func.sum(signed_value).desc())
+    return stmt
+
+
+def credits_collected(
+    session: Session,
+    start: date | None = None,
+    end: date | None = None,
+    underlying: str | None = None,
+    account: str | None = None,
+) -> list[CreditRow]:
+    """Cash collected selling minus cash paid buying, from raw trade actions
+    (Trade rows, assignment/exercise delivery legs, and cash-settled
+    exercise/assignment rows), grouped by underlying. Gross of fees."""
+    signed_value = _credit_signed_value()
+    stmt = _credit_filters(
+        select(
+            RawTransaction.underlying_symbol,
+            func.count(),
+            func.sum(signed_value),
+        ),
+        start, end, underlying, account,
+    ).group_by(RawTransaction.underlying_symbol).order_by(func.sum(signed_value).desc())
 
     return [
         CreditRow(group=group, trades=n, credits=Decimal(str(total)) if total is not None else Decimal("0"))
         for group, n, total in session.execute(stmt)
     ]
+
+
+def credits_timeseries(
+    session: Session,
+    start: date | None = None,
+    end: date | None = None,
+    underlying: str | None = None,
+    account: str | None = None,
+) -> list[tuple[date, Decimal, Decimal]]:
+    """(day, day credits, cumulative credits) points for the credits chart."""
+    day = func.date(RawTransaction.executed_at)
+    stmt = _credit_filters(
+        select(day, func.sum(_credit_signed_value())),
+        start, end, underlying, account,
+    ).group_by(day).order_by(day)
+    points: list[tuple[date, Decimal, Decimal]] = []
+    running = Decimal("0")
+    for day_str, total in session.execute(stmt):
+        day_credits = Decimal(str(total or 0))
+        running += day_credits
+        points.append((date.fromisoformat(str(day_str)), day_credits, running))
+    return points
 
 
 def _close_filters(stmt, start, end, underlying, account):

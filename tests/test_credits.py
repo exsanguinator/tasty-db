@@ -1,6 +1,6 @@
 from datetime import date
 
-from tastydb.analytics import credits_collected
+from tastydb.analytics import credits_collected, credits_timeseries
 
 from .conftest import make_txn, run_pipeline
 
@@ -123,3 +123,28 @@ def test_per_underlying_grouping_and_total(session):
     assert by_symbol["AAPL"] == 1000
     assert by_symbol["MSFT"] == 100
     assert sum(r.credits for r in rows) == 1100
+
+
+def test_credits_timeseries_accumulates_per_day(session):
+    run_pipeline(
+        session,
+        [
+            make_txn(action="Sell to Open", symbol="AAPL", quantity=100, price=10.0,
+                      value=1000.0, value_effect="Credit",
+                      executed_at="2024-01-02T15:00:00+00:00"),
+            make_txn(action="Sell to Open", symbol="MSFT", quantity=100, price=5.0,
+                      value=500.0, value_effect="Credit",
+                      executed_at="2024-01-02T16:00:00+00:00"),
+            make_txn(action="Buy to Close", symbol="AAPL", quantity=100, price=8.0,
+                      value=800.0, value_effect="Debit",
+                      executed_at="2024-02-01T15:00:00+00:00"),
+        ],
+    )
+    points = credits_timeseries(session)
+    assert points == [
+        (date(2024, 1, 2), 1500, 1500),
+        (date(2024, 2, 1), -800, 700),
+    ]
+    total = sum(r.credits for r in credits_collected(session))
+    assert points[-1][2] == total
+    assert credits_timeseries(session, underlying="MSFT") == [(date(2024, 1, 2), 500, 500)]

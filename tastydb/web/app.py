@@ -20,6 +20,7 @@ from sqlalchemy import select
 
 from ..analytics import (
     credits_collected,
+    credits_timeseries,
     list_closes,
     open_positions,
     realized_pnl,
@@ -155,9 +156,15 @@ def create_app(config: Config) -> FastAPI:
         f = filters_from(request)
         with session_factory() as session:
             rows = credits_collected(session, **f)
+            points = credits_timeseries(session, **f)
         total = sum((r.credits for r in rows), Decimal("0"))
         trades = sum(r.trades for r in rows)
-        return render(request, "credits.html", total=total, trades=trades, rows=rows)
+        return render(
+            request, "credits.html",
+            total=total, trades=trades, rows=rows,
+            chart_labels=[p[0].isoformat() for p in points],
+            chart_values=[float(p[2]) for p in points],
+        )
 
     @app.get("/closes")
     def closes_view(request: Request, underlying: str | None = None, page: int = 1):

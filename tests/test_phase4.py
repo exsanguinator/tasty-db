@@ -191,6 +191,11 @@ def test_dashboard_routes_smoke(tmp_path):
     assert underlying_page.status_code == 200
     assert "Cumulative realized PnL" in underlying_page.text
 
+    credits_page = client.get("/credits")
+    assert credits_page.status_code == 200
+    assert "Cumulative credits" in credits_page.text
+    assert '"labels": ["' in credits_page.text  # chart has data points
+
     assert client.get("/lot/999999").status_code == 200  # not-found page, no 500
 
 
