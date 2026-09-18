@@ -91,6 +91,14 @@ schema changes need no migration: `db._ensure_derived_schema` drops
   match time (`matching.Q_MONEY`/`Q_PRICE`) — never write unquantized
   divisions to money columns (SQLite stores them as floats).
 - Timestamps are stored UTC-naive (converted on ingest).
+- Day bucketing (PnL/credits charts) and `--start`/`--end`/dashboard date
+  filters use the **UTC date** of `executed_at`/`close_date`. The broker's
+  `transaction_date` differs for ~0.5% of real rows: futures options traded
+  ~6–7pm ET (CME session → next trade date) or on exchange holidays (next
+  business day) and evening-ET crypto (broker date = previous day); equities
+  and equity options always match. Cash flows/returns use `transaction_date`.
+  Accepted as-is. Converting to ET would not fix it; the real fix is
+  bucketing by `transaction_date` (needs a trade-date column on `lot_closes`).
 - Fee sign convention: positive = cost (`Debit`), negative = rebate.
 
 ## API facts (verified 2026-07; docs mirror in CLAUDE.local.md reference)

@@ -208,6 +208,16 @@ dashboard ever makes is the optional *Refresh marks* button (live quotes for
 unrealized PnL) — everything else is served from your local database, with
 charting vendored (no CDN).
 
+A note on dates: charts and date filters (here and in `tastydb pnl` /
+`tastydb credits --start/--end`) use the UTC calendar date of each trade.
+Stocks and equity options always land on the same day as on your broker
+statement. A few trades don't: futures options traded in the evening session
+(~6–7pm ET, which CME counts as the next trading day) or on exchange holidays,
+and crypto traded in the evening ET. Those can appear one day off from the
+broker's trade date. Totals over a date range only differ when a range starts
+or ends on one of those days. The **Performance** page uses the broker's trade
+dates.
+
 ### Web Dashboard Sample Overview
 
 <img width="2518" height="1560" alt="image" src="https://github.com/user-attachments/assets/00c5d0d5-a512-4a17-b212-53b07f7d9866" />
