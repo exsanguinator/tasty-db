@@ -42,6 +42,9 @@ analytics), `marks.py` (mark cache for unrealized PnL), `cashflows.py`
 demand from raw), `returns.py` (account TWR/XIRR from `balance_snapshots` +
 external flows), `cli.py` (click), `web/` (FastAPI + Jinja dashboard, served
 by `tastydb dashboard`; read-only except POST /marks/refresh).
+`forward.py` (repo root, not part of the package, stdlib only) is a TCP relay
+that exposes the loopback-bound dashboard on the LAN (0.0.0.0:8787 →
+127.0.0.1:8787); keep its ports in sync with the `dashboard` CLI defaults.
 
 Account returns: `tastydb sync` also upserts EOD `balance_snapshots`
 (per-account PK (account, date, time_of_day); older-than-history gaps

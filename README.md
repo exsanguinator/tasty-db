@@ -147,7 +147,8 @@ TOTAL                                39330.00
 ```
 
 The dashboard's **Credits** page shows the same total and per-underlying
-breakdown with the usual account/date-range filters.
+breakdown, plus a cumulative credits chart, with the usual account/date-range
+filters.
 
 ### "How is my account actually performing?" — net-liq returns
 
@@ -200,7 +201,7 @@ where.
 | **Strategies** | Multi-leg orders (spreads, condors) reported as single trades |
 | **Chains** | Roll campaigns: every roll of a position as one story with total PnL |
 | **Performance** | Net-liq chart, growth-of-$100, TWR/XIRR, cash-flow table |
-| **Credits** | Credits collected (sells minus buys) by underlying, Total + breakdown |
+| **Credits** | Credits collected (sells minus buys): total, cumulative credits chart, per-underlying breakdown |
 
 Every view filters by account and date range. The only network call the
 dashboard ever makes is the optional *Refresh marks* button (live quotes for
@@ -210,6 +211,31 @@ charting vendored (no CDN).
 ### Web Dashboard Sample Overview
 
 <img width="2518" height="1560" alt="image" src="https://github.com/user-attachments/assets/00c5d0d5-a512-4a17-b212-53b07f7d9866" />
+
+### Viewing the dashboard from another device
+
+The dashboard binds to `127.0.0.1`, so by default only the machine running it
+can open it. To reach it from a phone or another computer on your network,
+run `forward.py` from the repo root next to the dashboard. It's a tiny
+standard-library TCP relay that listens on all interfaces on port 8787 and
+passes each connection through to `127.0.0.1:8787`:
+
+```sh
+tastydb dashboard      # terminal 1
+python3 forward.py     # terminal 2 (Ctrl-C to stop)
+```
+
+Then browse to `http://<this-machine's-LAN-IP>:8787/`.
+
+- Both sides use port 8787. That works on macOS because loopback traffic goes
+  to the more specific `127.0.0.1` binding, but on Linux the relay usually
+  fails with "Address already in use". If it does, set `LISTEN_PORT` in
+  `forward.py` to another port (e.g. 8788) and browse to that one.
+- You can skip the relay with `tastydb dashboard --host 0.0.0.0`, which
+  serves the dashboard on every interface directly.
+- The dashboard has no authentication, and anyone who can reach it can press
+  *Refresh marks*, which calls the TastyTrade API with your credentials. Only
+  expose it on a network you trust.
 
 ## How it works (in one paragraph)
 
