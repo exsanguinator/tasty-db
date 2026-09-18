@@ -13,6 +13,26 @@ Usage (two terminals):
 
 Then browse to http://<this-machine's-LAN-IP>:8787 from another device.
 
+Finding this machine's LAN IP (usually 192.168.x.x, 10.x.x.x or
+172.16-31.x.x; not 127.0.0.1):
+
+    # macOS: en0 is usually Wi-Fi on laptops, Ethernet on desktops; if it
+    # prints nothing, try en1, or ask which interface the default route uses:
+    ipconfig getifaddr en0
+    route -n get default | grep interface
+
+    # Linux:
+    hostname -I                  # first address listed
+    ip route get 1.1.1.1         # the address after "src"
+
+    # Windows:
+    ipconfig                     # "IPv4 Address" under the active adapter
+
+Or on macOS, open System Settings -> Wi-Fi (or Network) -> Details next to the
+connected network. The address can change when DHCP renews. If a bookmark
+stops working, check the address again, or set a DHCP reservation on the
+router.
+
 Notes:
 - Listening and target ports are both 8787. That works on macOS because the
   more specific 127.0.0.1 binding (the dashboard) wins for loopback traffic,
