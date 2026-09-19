@@ -165,6 +165,7 @@ def test_dashboard_routes_smoke(tmp_path):
     assert home.status_code == 200
     assert "Realized PnL" in home.text
     assert "XSP" in home.text
+    assert "By underlying" in home.text
     assert "Test IRA" in home.text  # account dropdown uses nickname
 
     closes = client.get("/closes")

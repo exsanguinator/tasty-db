@@ -143,8 +143,7 @@ def create_app(config: Config) -> FastAPI:
         return render(
             request, "overview.html",
             total=total, fees=fees, closes=closes,
-            winners=by_underlying[:10],
-            losers=[r for r in reversed(by_underlying) if r.realized_pnl < 0][:10],
+            rows=by_underlying,
             by_reason=by_reason,
             chart_labels=[p[0].isoformat() for p in points],
             chart_values=[float(p[2]) for p in points],

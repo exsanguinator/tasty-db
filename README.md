@@ -195,7 +195,7 @@ where.
 
 | Page | What it shows |
 |---|---|
-| **Overview** | Realized PnL / fees, cumulative PnL chart, best & worst underlyings |
+| **Overview** | Realized PnL / fees, cumulative PnL chart, per-underlying breakdown (all underlyings, by realized PnL) |
 | **Closes** | Every realized close, filterable, linked to its lot |
 | **Positions** | Open lots with cost basis and unrealized PnL from cached marks |
 | **Strategies** | Multi-leg orders (spreads, condors) reported as single trades |
