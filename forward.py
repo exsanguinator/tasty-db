@@ -11,10 +11,11 @@ Usage (two terminals):
     .venv/bin/tastydb dashboard        # 1. start the dashboard (127.0.0.1:8787)
     python3 forward.py                 # 2. start the relay; Ctrl-C to stop
 
-Then browse to http://<this-machine's-LAN-IP>:8787 from another device.
-
-Finding this machine's LAN IP (usually 192.168.x.x, 10.x.x.x or
-172.16-31.x.x; not 127.0.0.1):
+Then browse to http://<this-machine's-LAN-IP>:8787 from another device. On
+startup the relay prints that URL, using the address of the interface that
+carries the default route. If that guess is wrong (VPN, several network
+adapters), find the LAN IP (usually 192.168.x.x, 10.x.x.x or 172.16-31.x.x;
+not 127.0.0.1) by hand:
 
     # macOS: en0 is usually Wi-Fi on laptops, Ethernet on desktops; if it
     # prints nothing, try en1, or ask which interface the default route uses:
@@ -52,6 +53,17 @@ TARGET_HOST = '127.0.0.1'  # where `tastydb dashboard` listens by default
 TARGET_PORT = 8787
 
 
+# Best guess at this machine's LAN IP: "connecting" a UDP socket sends no
+# packets, but makes the OS pick the outgoing interface for that destination,
+# whose address getsockname() then reports. Returns None when offline.
+def lan_ip():
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(('192.0.2.1', 80))  # TEST-NET-1: never actually contacted
+            return s.getsockname()[0]
+        except OSError:
+            return None
+
 # Copy bytes one way until either side closes, then close both sockets so the
 # thread running the opposite direction also ends.
 def forward(src, dst):
@@ -82,6 +94,11 @@ def main():
     listener.bind((LISTEN_HOST, LISTEN_PORT))
     listener.listen(5)
     print(f"Forwarding 0.0.0.0:{LISTEN_PORT} -> {TARGET_HOST}:{TARGET_PORT}")
+    ip = lan_ip()
+    if ip:
+        print(f"From another device, browse to http://{ip}:{LISTEN_PORT}")
+    else:
+        print("Couldn't determine the LAN IP; see the docstring to find it by hand")
     while True:
         client_sock, addr = listener.accept()
         threading.Thread(target=handle_client, args=(client_sock,), daemon=True).start()
