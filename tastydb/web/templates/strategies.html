@@ -5,14 +5,14 @@
 <div class="panel">
   <h2>
     Strategies
-    <span class="sub">closes grouped by opening order — legs entered together stay together</span>
+    <span class="sub">closes grouped by opening order — legs entered together stay together; legs added to a position later form their own row</span>
     {% if underlying %}<span class="sub">underlying = {{ underlying }}</span>{% endif %}
   </h2>
   {% if rows %}
   <table>
     <thead>
       <tr>
-        <th>Account</th><th>Underlying</th><th>Legs</th>
+        <th>Account</th><th>Underlying</th><th>Strategy</th><th>Legs</th>
         <th>Opened</th><th>Closed</th><th>Reasons</th><th>Chain</th>
         <th class="num">Realized PnL</th>
       </tr>
@@ -22,6 +22,7 @@
       <tr>
         <td>{{ account_names.get(s.account_id, s.account_id) }}</td>
         <td><a href="/underlying/{{ s.underlying_symbol }}?{{ filter_query }}">{{ s.underlying_symbol }}</a></td>
+        <td><span class="tag">{{ s.strategy_name }}</span></td>
         <td class="legs">
           {% for leg in s.legs %}{{ leg.side.value }} {{ leg.quantity | qty }} × {{ leg.symbol }}{{ ", " if not loop.last }}{% endfor %}
           <span class="dim">({% for lid in s.lot_ids %}<a href="/lot/{{ lid }}">lot</a>{{ " " if not loop.last }}{% endfor %})</span>

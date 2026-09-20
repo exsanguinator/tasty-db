@@ -16,7 +16,11 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from .marks import unrealized_pnl
-from .models import AssetType, Lot, LotClose, Mark, ProcessingStatus, RawTransaction, Side
+from .models import (
+    AssetType, Lot, LotClose, Mark, OptionType, ProcessingStatus, RawTransaction, Side,
+)
+from .structures import CUSTOM, LegShape, name_structure
+from .symbology import parse_future_option_symbol, parse_occ_symbol
 
 _CREDIT_ACTIONS = (
     "buy to open", "sell to open", "buy to close", "sell to close", "buy", "sell",
@@ -301,6 +305,12 @@ class StrategyLeg:
     side: Side
     quantity: Decimal
     realized_pnl: Decimal
+    # Parsed out of the symbol — lot_closes doesn't store these, but the OCC /
+    # future-option symbol encodes them. None for stock and outright futures.
+    option_type: OptionType | None = None
+    strike: Decimal | None = None
+    expiration: date | None = None
+    asset_type: AssetType | None = None
 
 
 @dataclass
@@ -316,6 +326,24 @@ class StrategyRow:
     close_reasons: list[str]
     lot_ids: list[int] = field(default_factory=list)
     chain_id: int | None = None  # roll chain this strategy belongs to, if any
+    strategy_name: str = CUSTOM  # derived leg shape, e.g. "Iron condor"
+
+
+def _parse_leg_symbol(symbol: str, asset_type: AssetType) -> dict:
+    """Strike / expiry / call-put for an option leg, empty for anything else."""
+    if asset_type is AssetType.equity_option:
+        parsed = parse_occ_symbol(symbol)
+    elif asset_type is AssetType.future_option:
+        parsed = parse_future_option_symbol(symbol)
+    else:
+        parsed = None
+    if parsed is None:
+        return {}
+    return {
+        "option_type": parsed.option_type,
+        "strike": parsed.strike,
+        "expiration": parsed.expiration_date,
+    }
 
 
 def strategies(
@@ -343,9 +371,11 @@ def strategies(
         for c in group:
             leg = legs.get((c.symbol, c.side))
             if leg is None:
+                parsed = _parse_leg_symbol(c.symbol, c.asset_type)
                 legs[(c.symbol, c.side)] = StrategyLeg(
                     symbol=c.symbol, side=c.side,
                     quantity=c.quantity_closed, realized_pnl=c.realized_pnl,
+                    asset_type=c.asset_type, **parsed,
                 )
             else:
                 leg.quantity += c.quantity_closed
@@ -362,6 +392,14 @@ def strategies(
             close_reasons=sorted({c.close_reason.value for c in group}),
             lot_ids=sorted({c.lot_id for c in group}),
             chain_id=next((c.chain_id for c in group if c.chain_id is not None), None),
+            strategy_name=name_structure([
+                LegShape(
+                    side=l.side, option_type=l.option_type, strike=l.strike,
+                    expiration=l.expiration, quantity=l.quantity,
+                    asset_type=l.asset_type,
+                )
+                for l in legs.values()
+            ]),
         ))
     rows.sort(key=lambda r: r.close_date, reverse=True)
     return rows[:limit]

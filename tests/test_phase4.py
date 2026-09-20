@@ -56,6 +56,8 @@ def test_strategies_group_legs_of_one_order(session):
     assert strat.realized_pnl == Decimal("20")
     assert strat.underlying_symbol == "XSP"
     assert sorted(l.side.value for l in strat.legs) == ["long", "short"]
+    # short 658 call / long 659 call: premium collected
+    assert strat.strategy_name == "Call credit spread"
 
 
 def test_strategies_fall_back_to_single_lot_without_order(session):
@@ -181,6 +183,7 @@ def test_dashboard_routes_smoke(tmp_path):
     strategies_page = client.get("/strategies")
     assert strategies_page.status_code == 200
     assert "short 2" in strategies_page.text
+    assert "Call credit spread" in strategies_page.text
 
     lot_page = client.get("/lot/901")
     assert lot_page.status_code == 200

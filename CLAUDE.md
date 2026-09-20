@@ -35,9 +35,10 @@ raw payloads via `tests/conftest.py:make_txn` and run the pipeline offline.
 Supporting modules: `auth.py` (OAuth2 refresh-token → 15-min access tokens),
 `client.py` (REST, pagination, market data), `instruments.py`
 (multiplier/settlement-type cache with offline symbology fallbacks),
-`symbology.py` (OCC/futures symbol parsers), `analytics.py` (PnL aggregation,
-positions, strategies), `chains.py` (roll-chain grouping + campaign
-analytics), `marks.py` (mark cache for unrealized PnL), `cashflows.py`
+`symbology.py` (OCC/futures symbol parsers), `structures.py` (pure leg-shape →
+strategy-name rules), `analytics.py` (PnL aggregation, positions, strategies),
+`chains.py` (roll-chain grouping + campaign analytics), `marks.py` (mark cache
+for unrealized PnL), `cashflows.py`
 (Money Movement → external-flow vs performance classification, computed on
 demand from raw), `returns.py` (account TWR/XIRR from `balance_snapshots` +
 external flows), `cli.py` (click), `web/` (FastAPI + Jinja dashboard, served
@@ -61,7 +62,17 @@ flow-claiming rows become `unclassified_flow` (treated external, listed by
 
 Strategy grouping keys on `open_order_id` (the opening trade's broker
 order-id, present on 100% of Trade txns; NULL on Receive Deliver, so
-assignment deliveries group per lot). Roll chains: a roll order's id appears
+assignment deliveries group per lot). Each group is then named by
+`structures.name_structure` from its leg shape (sides, call/put, strikes,
+expiries, quantities) — "Iron condor", "Short strangle", "Superbull" —
+falling back to "Custom" (~0.8% of real orders), the same fallback the
+broker's own Order Chain display uses. The API has no strategy-name field to
+sync: order objects carry only `leg-count`/prices, and `complex-order-id`/
+`-tag` describe OTO/OCO linkage, not leg shape. `StrategyLeg` re-parses
+strike/expiry/right out of the symbol (`lot_closes` doesn't store them), so
+new rules need no migration. Chains name structures too (from `Lot` columns
+directly, no parsing): per step, and `ChainSummary.strategy_name` = what the
+latest opening order rolled into. Roll chains: a roll order's id appears
 as both `close_order_id` on the old lots' closes and `open_order_id` on the
 new lots; `chains.assign_chains` (end of `rebuild_lots`) union-finds those
 links per (account, underlying) and stamps `chain_id` = the root (earliest)

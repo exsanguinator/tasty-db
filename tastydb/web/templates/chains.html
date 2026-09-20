@@ -5,14 +5,14 @@
 <div class="panel">
   <h2>
     Roll chains
-    <span class="sub">positions linked by roll orders — totals span the whole campaign; the date range picks which chains appear</span>
+    <span class="sub">positions linked by roll orders — totals span the whole campaign; the date range picks which chains appear; “Structure” is what the latest order rolled into</span>
     {% if underlying %}<span class="sub">underlying = {{ underlying }}</span>{% endif %}
   </h2>
   {% if rows %}
   <table>
     <thead>
       <tr>
-        <th>Chain</th><th>Account</th><th>Underlying</th>
+        <th>Chain</th><th>Account</th><th>Underlying</th><th>Structure</th>
         <th>Started</th><th>Last activity</th>
         <th class="num">Orders</th><th class="num">Rolls</th>
         <th class="num">Days</th><th>Status</th>
@@ -25,6 +25,7 @@
         <td><a href="/chain/{{ r.chain_id }}">{{ r.chain_id }}</a></td>
         <td>{{ account_names.get(r.account_id, r.account_id) }}</td>
         <td><a href="/underlying/{{ r.underlying_symbol }}?{{ filter_query }}">{{ r.underlying_symbol }}</a></td>
+        <td><span class="tag">{{ r.strategy_name }}</span></td>
         <td>{{ r.first_open.date() }}</td>
         <td>{{ r.last_activity.date() }}</td>
         <td class="num">{{ r.orders }}</td>

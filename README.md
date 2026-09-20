@@ -10,8 +10,9 @@ database and turns it into the reports the broker doesn't give you:
   stocks, equity options, futures, and futures options, with fees allocated and
   expirations, assignments, exercises, and cash settlements handled correctly.
 - **Strategy & roll-chain views** — spreads entered as one order report as one
-  trade, and rolled positions are stitched into whole campaigns with running
-  credit and total PnL.
+  trade, named by their leg shape (Iron condor, Short strangle, Put credit
+  spread, ...), and rolled positions are stitched into whole campaigns with
+  running credit and total PnL.
 - **Account-level returns** — time-weighted return (TWR) and money-weighted
   return (XIRR) computed from daily net-liq snapshots and your actual deposits
   and withdrawals, so you can compare yourself to a benchmark honestly.
@@ -198,8 +199,8 @@ where.
 | **Overview** | Realized PnL / fees, cumulative PnL chart, per-underlying breakdown (all underlyings, by realized PnL) |
 | **Closes** | Every realized close, filterable, linked to its lot |
 | **Positions** | Open lots with cost basis and unrealized PnL from cached marks |
-| **Strategies** | Multi-leg orders (spreads, condors) reported as single trades |
-| **Chains** | Roll campaigns: every roll of a position as one story with total PnL |
+| **Strategies** | Multi-leg orders reported as single trades, each named by its leg shape (Iron condor, Short strangle, Superbull, ...) |
+| **Chains** | Roll campaigns: every roll of a position as one story with total PnL, each step named by the structure it opened |
 | **Performance** | Net-liq chart, growth-of-$100, TWR/XIRR, cash-flow table |
 | **Credits** | Credits collected (sells minus buys): total, cumulative credits chart, per-underlying breakdown |
 

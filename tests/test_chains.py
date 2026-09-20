@@ -153,6 +153,29 @@ def test_sweep_close_inherits_chain_through_its_lot(session):
     assert not detail.is_open
 
 
+def test_chain_names_structures_per_step_and_current(session):
+    run_pipeline(session, _roll_payloads())
+    (detail,) = chain_detail(session, 5001)
+    # every step that opened something is named; the pure buyback is not
+    assert [s.strategy_name for s in detail.steps] == ["Short put", "Short put", ""]
+    assert detail.strategy_name == "Short put"
+
+
+def test_chain_current_structure_follows_the_latest_roll(session):
+    """A short put rolled into a strangle reports the strangle, not the put."""
+    run_pipeline(session, _roll_payloads()[:2] + [
+        make_txn(txn_id=203, action="Sell to Open", symbol="XSP   260417P00550000",
+                 instrument_type="Equity Option", quantity=2, price=7.20,
+                 executed_at="2026-02-10T15:00:00+00:00", **{"order-id": 5002}),
+        make_txn(txn_id=204, action="Sell to Open", symbol="XSP   260417C00600000",
+                 instrument_type="Equity Option", quantity=2, price=4.10,
+                 executed_at="2026-02-10T15:00:00+00:00", **{"order-id": 5002}),
+    ])
+    (detail,) = chain_detail(session, 5001)
+    assert detail.strategy_name == "Short strangle"
+    assert [s.strategy_name for s in detail.steps] == ["Short put", "Short strangle"]
+
+
 def test_strategies_link_to_their_chain(session):
     run_pipeline(session, _roll_payloads())
     rows = strategies(session)
@@ -182,6 +205,7 @@ def test_dashboard_chain_pages(tmp_path):
     assert "Chain 5001" in page.text
     assert "roll" in page.text
     assert "XSP   260417P00550000" in page.text
+    assert "Structure now" in page.text and "Short put" in page.text
 
     assert client.get("/chain/999999").status_code == 200  # not-found page, no 500
 

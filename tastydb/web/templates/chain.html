@@ -17,6 +17,7 @@
     <dt>Started</dt><dd>{{ d.first_open.date() }}</dd>
     <dt>Last activity</dt><dd>{{ d.last_activity.date() }}</dd>
     <dt>Days in trade</dt><dd>{{ d.days_in_trade }}{{ ' so far' if d.is_open }}</dd>
+    <dt>Structure now</dt><dd><span class="tag">{{ d.strategy_name }}</span>{{ ' (as last rolled)' if not d.is_open }}</dd>
     <dt>Orders</dt><dd>{{ d.orders }} ({{ d.rolls }} roll{{ 's' if d.rolls != 1 }})</dd>
     <dt>Fees</dt><dd>{{ d.fees | money }}</dd>
     <dt>Net cash</dt><dd class="{{ d.net_cash | pnl_class }}">{{ d.net_cash | signed_money }}{{ ' (open lots not yet bought back)' if d.is_open }}</dd>
@@ -45,6 +46,7 @@
         <td class="legs">
           {% for c in st.closes %}closed {{ c.side.value }} {{ c.quantity_closed | qty }} × <a href="/lot/{{ c.lot_id }}">{{ c.symbol }}</a> @ {{ c.close_price | money }}<br>{% endfor %}
           {% for l in st.opened %}opened {{ l.side.value }} {{ l.original_quantity | qty }} × <a href="/lot/{{ l.lot_id }}">{{ l.symbol }}</a> @ {{ l.open_price | money }}<br>{% endfor %}
+          {% if st.strategy_name %}<span class="tag">{{ st.strategy_name }}</span>{% endif %}
         </td>
         <td class="num {{ st.cash | pnl_class }}">{{ st.cash | signed_money }}</td>
         <td class="num {{ st.running_cash | pnl_class }}">{{ st.running_cash | signed_money }}</td>
