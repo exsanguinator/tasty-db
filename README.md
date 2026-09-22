@@ -151,7 +151,8 @@ TOTAL                                39330.00
 
 The dashboard's **Credits** page shows the same total and per-underlying
 breakdown, plus a cumulative credits chart, with the usual account/date-range
-filters.
+filters. Switch it to *By strategy* and click a name to see the individual
+trades behind that strategy's credits.
 
 ### "How is my account actually performing?" — net-liq returns
 
@@ -198,13 +199,14 @@ where.
 
 | Page | What it shows |
 |---|---|
-| **Overview** | Realized PnL / fees, cumulative PnL chart, per-underlying breakdown (all underlyings, by realized PnL) |
+| **Overview** | Realized PnL / fees, cumulative PnL chart, per-underlying breakdown (all underlyings, by realized PnL), toggleable to a per-strategy one |
 | **Closes** | Every realized close, filterable, linked to its lot |
 | **Positions** | Open lots with cost basis and unrealized PnL from cached marks |
 | **Strategies** | Multi-leg orders reported as single trades, each named by its leg shape (Iron condor, Short strangle, Superbull, ...) |
 | **Chains** | Roll campaigns: every roll of a position as one story with total PnL, each step named by the structure it opened |
 | **Performance** | Net-liq chart, growth-of-$100, TWR/XIRR, cash-flow table |
-| **Credits** | Credits collected (sells minus buys): total, cumulative credits chart, per-underlying breakdown |
+| **Credits** | Credits collected (sells minus buys): total, cumulative credits chart, per-underlying or per-strategy breakdown |
+| **Strategy** | One strategy name drilled down: its trades, its underlyings, and the individual credit-bearing transactions. Reached by clicking a row in the Overview or Credits *By strategy* table, or a name on the Strategies page |
 
 Every view filters by account and date range. The only network call the
 dashboard ever makes is the optional *Refresh marks* button (live quotes for

@@ -22,6 +22,7 @@ from ..analytics import (
     credits_collected,
     credits_timeseries,
     list_closes,
+    list_credit_transactions,
     open_positions,
     realized_pnl,
     realized_timeseries,
@@ -285,7 +286,7 @@ def create_app(config: Config) -> FastAPI:
         return render(request, "lot.html", lot=lot, closes=closes,
                       inbound_links=inbound, siblings=siblings)
 
-    @app.get("/underlying/{symbol}")
+    @app.get("/underlying/{symbol:path}")  # :path — crypto symbols contain a slash (SOL/USD)
     def underlying_view(request: Request, symbol: str):
         f = filters_from(request)
         with session_factory() as session:
@@ -301,6 +302,29 @@ def create_app(config: Config) -> FastAPI:
             request, "underlying.html",
             symbol=symbol, rows=rows, total=total, strats=strats,
             positions=positions, realized=realized,
+            chart_labels=[p[0].isoformat() for p in points],
+            chart_values=[float(p[2]) for p in points],
+        )
+
+    @app.get("/strategy/{name}")
+    def strategy_view(request: Request, name: str):
+        """Drill-down for one strategy name: the trades that carry it."""
+        f = filters_from(request)
+        with session_factory() as session:
+            by_underlying = realized_pnl(session, **f, strategy=name)
+            strats = strategies(session, **f, strategy=name, limit=200)
+            points = realized_timeseries(session, **f, strategy=name)
+            credit_rows, credit_count, credit_total = list_credit_transactions(
+                session, **f, strategy=name, limit=200,
+            )
+        return render(
+            request, "strategy.html",
+            name=name, rows=strats, by_underlying=by_underlying,
+            realized=sum((r.realized_pnl for r in by_underlying), Decimal("0")),
+            fees=sum((r.fees for r in by_underlying), Decimal("0")),
+            closes=sum(r.closes for r in by_underlying),
+            credit_rows=credit_rows, credit_count=credit_count,
+            credit_total=credit_total,
             chart_labels=[p[0].isoformat() for p in points],
             chart_values=[float(p[2]) for p in points],
         )

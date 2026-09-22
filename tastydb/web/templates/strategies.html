@@ -22,7 +22,7 @@
       <tr>
         <td>{{ account_names.get(s.account_id, s.account_id) }}</td>
         <td><a href="/underlying/{{ s.underlying_symbol }}?{{ filter_query }}">{{ s.underlying_symbol }}</a></td>
-        <td><span class="tag">{{ s.strategy_name }}</span></td>
+        <td><a href="/strategy/{{ s.strategy_name | urlencode }}?{{ filter_query }}"><span class="tag">{{ s.strategy_name }}</span></a></td>
         <td class="legs">
           {% for leg in s.legs %}{{ leg.side.value }} {{ leg.quantity | qty }} × {{ leg.symbol }}{{ ", " if not loop.last }}{% endfor %}
           <span class="dim">({% for lid in s.lot_ids %}<a href="/lot/{{ lid }}">lot</a>{{ " " if not loop.last }}{% endfor %})</span>

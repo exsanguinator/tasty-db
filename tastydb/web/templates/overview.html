@@ -39,7 +39,9 @@
         <td>
           {%- if group == "underlying" -%}
             <a href="/underlying/{{ r.group }}?{{ filter_query }}">{{ r.group }}</a>
-          {%- else -%}{{ r.group }}{%- endif -%}
+          {%- else -%}
+            <a href="/strategy/{{ r.group | urlencode }}?{{ filter_query }}">{{ r.group }}</a>
+          {%- endif -%}
         </td>
         <td class="num">{{ r.closes }}</td>
         <td class="num">{{ r.fees | money }}</td>

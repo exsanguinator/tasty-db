@@ -194,13 +194,28 @@ def test_dashboard_routes_smoke(tmp_path):
     underlying_page = client.get("/underlying/XSP")
     assert underlying_page.status_code == 200
     assert "Cumulative realized PnL" in underlying_page.text
+    # crypto underlyings carry a slash, so the route takes the rest of the path
+    assert client.get("/underlying/SOL/USD").status_code == 200
 
     credits_page = client.get("/credits")
     assert credits_page.status_code == 200
     assert "Cumulative credits" in credits_page.text
     assert '"labels": ["' in credits_page.text  # chart has data points
 
+    by_strategy = client.get("/?group=strategy")
+    assert by_strategy.status_code == 200
+    assert "/strategy/Call%20credit%20spread" in by_strategy.text
+    credits_by_strategy = client.get("/credits?group=strategy")
+    assert "/strategy/Call%20credit%20spread?#credits" in credits_by_strategy.text
+
+    strategy_page = client.get("/strategy/Call credit spread")
+    assert strategy_page.status_code == 200
+    assert "XSP   260408C00658000" in strategy_page.text  # the trade's legs
+    assert "/lot/901" in strategy_page.text
+    assert "Sell to Open" in strategy_page.text  # credits panel lists the trades
+
     assert client.get("/lot/999999").status_code == 200  # not-found page, no 500
+    assert client.get("/strategy/No%20such%20thing").status_code == 200
 
 
 def test_dashboard_filters_narrow_results(tmp_path):

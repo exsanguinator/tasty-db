@@ -4,7 +4,12 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from tastydb.analytics import credits_collected, realized_pnl, strategies
+from tastydb.analytics import (
+    credits_collected,
+    list_credit_transactions,
+    realized_pnl,
+    strategies,
+)
 from tastydb.models import Lot, LotClose
 
 from .conftest import make_txn, run_pipeline
@@ -128,3 +133,46 @@ def test_one_closing_transaction_over_several_lots_is_not_double_counted(session
     assert [(r.group, r.trades, r.credits) for r in rows] == [
         ("Short put", 3, Decimal("700")),
     ]
+
+
+def test_strategy_filter_narrows_the_close_side_queries(session):
+    run_pipeline(session, _vertical_and_strangle())
+    rows = strategies(session, strategy="Short strangle")
+    assert [r.open_order_id for r in rows] == [7011]
+
+    by_underlying = realized_pnl(session, strategy="Short strangle")
+    assert [(r.group, r.realized_pnl) for r in by_underlying] == [("XSP", Decimal("475"))]
+    assert realized_pnl(session, strategy="No such strategy") == []
+
+
+def test_list_credit_transactions_matches_the_grouped_totals(session):
+    run_pipeline(session, _vertical_and_strangle())
+    for row in credits_collected(session, group_by="strategy"):
+        txns, count, total = list_credit_transactions(session, strategy=row.group)
+        assert (count, total) == (row.trades, row.credits)
+        assert {t.strategy for t in txns} == {row.group}
+    # newest first
+    dates = [t.executed_at for t in list_credit_transactions(session)[0]]
+    assert dates == sorted(dates, reverse=True)
+
+
+def test_credit_transactions_of_a_close_spanning_lots_are_listed_once(session):
+    """The listing behind a credits row inherits the no-double-count rule."""
+    payloads = [
+        make_txn(txn_id=301, action="Sell to Open", symbol="XSP   260320P00560000",
+                 instrument_type="Equity Option", quantity=1, price=4.00,
+                 value=400.0, value_effect="Credit",
+                 executed_at="2026-01-05T15:00:00+00:00", **{"order-id": 7101}),
+        make_txn(txn_id=302, action="Sell to Open", symbol="XSP   260320P00560000",
+                 instrument_type="Equity Option", quantity=1, price=5.00,
+                 value=500.0, value_effect="Credit",
+                 executed_at="2026-01-06T15:00:00+00:00", **{"order-id": 7102}),
+        make_txn(txn_id=303, action="Buy to Close", symbol="XSP   260320P00560000",
+                 instrument_type="Equity Option", quantity=2, price=1.00,
+                 value=200.0, value_effect="Debit",
+                 executed_at="2026-02-05T15:00:00+00:00", **{"order-id": 7103}),
+    ]
+    run_pipeline(session, payloads)
+    txns, count, total = list_credit_transactions(session, strategy="Short put")
+    assert [t.txn_id for t in txns] == [303, 302, 301]
+    assert (count, total) == (3, Decimal("700"))

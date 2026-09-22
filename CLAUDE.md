@@ -73,7 +73,10 @@ exactly one place — `structures.assign_strategy_names` (end of `rebuild_lots`,
 before `assign_chains`) stamps `strategy_name` on every lot from the `Lot`
 columns (no symbol parsing) and closes inherit it from their lot — so
 strategies, chains, `pnl --group-by strategy`, `credits --group-by strategy`
-and the dashboard toggles all read the stored column. Credits group by
+and the dashboard toggles all read the stored column. Those toggles drill into
+`/strategy/{name}` (trades, per-underlying PnL, and the credit transactions of
+that name); `Unnamed` there selects `strategy_name IS NULL` and `Unmatched`
+the credit transactions no lot claims. Credits group by
 strategy in Python via `dict[txn_id, name]` (lot_id IS the opening txn id,
 `lot_closes.broker_close_txn_id` the closing one); joining `lot_closes` in SQL
 instead would multiply a close spanning several lots and inflate credits.

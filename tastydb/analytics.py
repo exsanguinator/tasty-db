@@ -28,6 +28,14 @@ _CREDIT_ACTIONS = (
 )
 
 
+def _strategy_where(strategy: str):
+    """UNNAMED is the label a NULL strategy_name is coalesced to, so selecting
+    it has to look for the NULL rather than for the label itself."""
+    if strategy == UNNAMED:
+        return LotClose.strategy_name.is_(None)
+    return LotClose.strategy_name == strategy
+
+
 @dataclass
 class PnlRow:
     group: str
@@ -43,6 +51,7 @@ def realized_pnl(
     end: date | None = None,
     underlying: str | None = None,
     account: str | None = None,
+    strategy: str | None = None,
     group_by: str = "underlying",  # underlying | asset_type | close_reason | strategy
 ) -> list[PnlRow]:
     group_col = {
@@ -70,6 +79,8 @@ def realized_pnl(
         stmt = stmt.where(LotClose.underlying_symbol == underlying)
     if account is not None:
         stmt = stmt.where(LotClose.account_id == account)
+    if strategy is not None:
+        stmt = stmt.where(_strategy_where(strategy))
     stmt = stmt.group_by(group_col).order_by(func.sum(LotClose.realized_pnl).desc())
 
     def _dec(v) -> Decimal:
@@ -147,21 +158,85 @@ def _strategy_of_transaction(session: Session) -> dict[int, str]:
     return names
 
 
-def _credits_by_strategy(session, start, end, underlying, account) -> list[CreditRow]:
+@dataclass
+class CreditTxnRow:
+    """One credit-bearing raw transaction, with the strategy it belongs to."""
+
+    txn_id: int
+    date: date | None  # broker transaction_date (the cash-flow convention)
+    executed_at: datetime
+    symbol: str | None
+    underlying_symbol: str | None
+    action: str | None
+    quantity: Decimal | None
+    credits: Decimal  # signed: positive = collected, negative = paid
+    strategy: str
+
+
+def _credit_txns(session, start, end, underlying, account) -> list[CreditTxnRow]:
+    """Every credit-bearing transaction in range, each resolved to exactly one
+    strategy name (UNMATCHED when no lot claims it)."""
     stmt = _credit_filters(
-        select(RawTransaction.id, _credit_signed_value()),
+        select(
+            RawTransaction.id,
+            RawTransaction.transaction_date,
+            RawTransaction.executed_at,
+            RawTransaction.symbol,
+            RawTransaction.underlying_symbol,
+            RawTransaction.action,
+            RawTransaction.quantity,
+            _credit_signed_value(),
+        ),
         start, end, underlying, account,
     )
     names = _strategy_of_transaction(session)
+    return [
+        CreditTxnRow(
+            txn_id=txn_id,
+            date=txn_date,
+            executed_at=executed_at,
+            symbol=symbol,
+            underlying_symbol=underlying_symbol,
+            action=action,
+            quantity=Decimal(str(quantity)) if quantity is not None else None,
+            credits=Decimal(str(value or 0)),
+            strategy=names.get(txn_id, UNMATCHED),
+        )
+        for (
+            txn_id, txn_date, executed_at, symbol, underlying_symbol,
+            action, quantity, value,
+        ) in session.execute(stmt)
+    ]
+
+
+def _credits_by_strategy(session, start, end, underlying, account) -> list[CreditRow]:
     totals: dict[str, Decimal] = defaultdict(Decimal)
     trades: dict[str, int] = defaultdict(int)
-    for txn_id, value in session.execute(stmt):
-        group = names.get(txn_id, UNMATCHED)
-        totals[group] += Decimal(str(value or 0))
-        trades[group] += 1
+    for txn in _credit_txns(session, start, end, underlying, account):
+        totals[txn.strategy] += txn.credits
+        trades[txn.strategy] += 1
     rows = [CreditRow(group=g, trades=trades[g], credits=totals[g]) for g in totals]
     rows.sort(key=lambda r: r.credits, reverse=True)
     return rows
+
+
+def list_credit_transactions(
+    session: Session,
+    start: date | None = None,
+    end: date | None = None,
+    underlying: str | None = None,
+    account: str | None = None,
+    strategy: str | None = None,
+    limit: int = 200,
+) -> tuple[list[CreditTxnRow], int, Decimal]:
+    """The individual transactions behind a `credits_collected` row: the shown
+    slice (newest first), the unpaged count, and the total over all of them."""
+    rows = _credit_txns(session, start, end, underlying, account)
+    if strategy is not None:
+        rows = [r for r in rows if r.strategy == strategy]
+    total = sum((r.credits for r in rows), Decimal("0"))
+    rows.sort(key=lambda r: (r.executed_at, r.txn_id), reverse=True)
+    return rows[:limit], len(rows), total
 
 
 def credits_collected(
@@ -216,7 +291,7 @@ def credits_timeseries(
     return points
 
 
-def _close_filters(stmt, start, end, underlying, account):
+def _close_filters(stmt, start, end, underlying, account, strategy=None):
     if start is not None:
         stmt = stmt.where(LotClose.close_date >= datetime.combine(start, time.min))
     if end is not None:
@@ -225,6 +300,8 @@ def _close_filters(stmt, start, end, underlying, account):
         stmt = stmt.where(LotClose.underlying_symbol == underlying)
     if account is not None:
         stmt = stmt.where(LotClose.account_id == account)
+    if strategy is not None:
+        stmt = stmt.where(_strategy_where(strategy))
     return stmt
 
 
@@ -234,11 +311,12 @@ def list_closes(
     end: date | None = None,
     underlying: str | None = None,
     account: str | None = None,
+    strategy: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> tuple[list[LotClose], int]:
     """Close rows for the browse view, newest first, plus the unpaged count."""
-    base = _close_filters(select(LotClose), start, end, underlying, account)
+    base = _close_filters(select(LotClose), start, end, underlying, account, strategy)
     total = session.execute(
         select(func.count()).select_from(base.subquery())
     ).scalar_one()
@@ -256,6 +334,7 @@ def realized_timeseries(
     end: date | None = None,
     underlying: str | None = None,
     account: str | None = None,
+    strategy: str | None = None,
 ) -> list[tuple[date, Decimal, Decimal]]:
     """(day, day PnL, cumulative PnL) points for the overview chart."""
     stmt = _close_filters(
@@ -263,7 +342,7 @@ def realized_timeseries(
             func.date(LotClose.close_date),
             func.sum(LotClose.realized_pnl),
         ),
-        start, end, underlying, account,
+        start, end, underlying, account, strategy,
     ).group_by(func.date(LotClose.close_date)).order_by(func.date(LotClose.close_date))
     points: list[tuple[date, Decimal, Decimal]] = []
     running = Decimal("0")
@@ -377,12 +456,13 @@ def strategies(
     end: date | None = None,
     underlying: str | None = None,
     account: str | None = None,
+    strategy: str | None = None,
     limit: int = 100,
 ) -> list[StrategyRow]:
     """Realized closes grouped by the opening order id — the legs of a spread
     entered as one order form one strategy. Closes without an opening order
     (deliveries, history gaps) group per lot instead."""
-    stmt = _close_filters(select(LotClose), start, end, underlying, account)
+    stmt = _close_filters(select(LotClose), start, end, underlying, account, strategy)
     closes = session.execute(stmt).scalars().all()
 
     grouped: dict[object, list[LotClose]] = defaultdict(list)

@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} · tasty-db{% endblock %}
+{% block content %}
+
+<div class="cards">
+  <div class="card">
+    <div class="label">{{ name }} realized PnL</div>
+    <div class="value {{ realized | pnl_class }}">{{ realized | signed_money }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Fees paid</div>
+    <div class="value">{{ fees | money }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Closes</div>
+    <div class="value">{{ closes }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Credits collected</div>
+    <div class="value {{ credit_total | pnl_class }}">{{ credit_total | signed_money }}</div>
+  </div>
+</div>
+
+{% if chart_labels %}
+<div class="panel">
+  <h2>Cumulative realized PnL — {{ name }}</h2>
+  {% include "_chart.html" %}
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>
+    Trades
+    <span class="sub">closes grouped by opening order, newest first, up to 200</span>
+    <span class="sub"><a href="/strategies?{{ filter_query }}">all strategies</a></span>
+  </h2>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Account</th><th>Underlying</th><th>Legs</th>
+        <th>Opened</th><th>Closed</th><th>Reasons</th><th>Chain</th>
+        <th class="num">Realized PnL</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in rows %}
+      <tr>
+        <td>{{ account_names.get(s.account_id, s.account_id) }}</td>
+        <td><a href="/underlying/{{ s.underlying_symbol | urlencode }}?{{ filter_query }}">{{ s.underlying_symbol }}</a></td>
+        <td class="legs">
+          {% for leg in s.legs %}{{ leg.side.value }} {{ leg.quantity | qty }} × {{ leg.symbol }}{{ ", " if not loop.last }}{% endfor %}
+          <span class="dim">({% for lid in s.lot_ids %}<a href="/lot/{{ lid }}">lot</a>{{ " " if not loop.last }}{% endfor %})</span>
+        </td>
+        <td>{{ s.open_date.date() }}</td>
+        <td>{{ s.close_date.date() }}</td>
+        <td>{% for r in s.close_reasons %}<span class="tag">{{ r }}</span> {% endfor %}</td>
+        <td>{% if s.chain_id %}<a href="/chain/{{ s.chain_id }}">{{ s.chain_id }}</a>{% endif %}</td>
+        <td class="num {{ s.realized_pnl | pnl_class }}">{{ s.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No closed {{ name }} trades in range.</div>
+  {% endif %}
+</div>
+
+{% if by_underlying %}
+<div class="panel">
+  <h2>By underlying</h2>
+  <table>
+    <thead><tr><th>Underlying</th><th class="num">Closes</th><th class="num">Fees</th><th class="num">Realized PnL</th></tr></thead>
+    <tbody>
+      {% for r in by_underlying %}
+      <tr>
+        <td><a href="/underlying/{{ r.group | urlencode }}?{{ filter_query }}">{{ r.group }}</a></td>
+        <td class="num">{{ r.closes }}</td>
+        <td class="num">{{ r.fees | money }}</td>
+        <td class="num {{ r.realized_pnl | pnl_class }}">{{ r.realized_pnl | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="panel" id="credits">
+  <h2>
+    Credits
+    <span class="sub">
+      the individual trades behind the credits total — newest first,
+      showing {{ credit_rows | length }} of {{ credit_count }}
+    </span>
+  </h2>
+  {% if credit_rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th><th>Underlying</th><th>Symbol</th><th>Action</th>
+        <th class="num">Qty</th><th class="num">Credit</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in credit_rows %}
+      <tr>
+        <td>{{ c.date or c.executed_at.date() }}</td>
+        <td>{% if c.underlying_symbol %}<a href="/underlying/{{ c.underlying_symbol | urlencode }}?{{ filter_query }}">{{ c.underlying_symbol }}</a>{% else %}—{% endif %}</td>
+        <td>{{ c.symbol or '—' }}</td>
+        <td>{{ c.action or '—' }}</td>
+        <td class="num">{{ c.quantity | qty if c.quantity is not none else '—' }}</td>
+        <td class="num {{ c.credits | pnl_class }}">{{ c.credits | signed_money }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No credit-bearing trades in range.</div>
+  {% endif %}
+</div>
+
+{% endblock %}
