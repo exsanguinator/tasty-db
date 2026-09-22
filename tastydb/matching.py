@@ -51,6 +51,7 @@ from .models import (
     SettlementType,
     Side,
 )
+from .structures import assign_strategy_names
 
 log = logging.getLogger(__name__)
 
@@ -373,12 +374,14 @@ def rebuild_lots(
     as_of = min(today, max_seen.date()) if max_seen else today
     swept = matcher.expire_worthless(as_of, grace_days=grace_days)
 
-    # Roll-chain pass: link orders whose id closed old lots AND opened new ones
+    # Naming + roll-chain passes. Strategy names first (per opening order);
+    # then link orders whose id closed old lots AND opened new ones
     # (chains.assign_chains). Runs after the sweep so settlement closes inherit
     # their lot's chain too.
     session.flush()
     all_lots = session.execute(select(Lot)).scalars().all()
     all_closes = session.execute(select(LotClose)).scalars().all()
+    assign_strategy_names(all_lots, all_closes)
     n_chains = assign_chains(all_lots, all_closes)
 
     session.commit()

@@ -27,13 +27,20 @@
 </div>
 
 <div class="panel">
-  <h2>By underlying <span class="sub">by realized PnL in range</span></h2>
+  <h2>
+    By {{ group }} <span class="sub">by realized PnL in range</span>
+    {% include "_group_toggle.html" %}
+  </h2>
   <table>
-    <thead><tr><th>Underlying</th><th class="num">Closes</th><th class="num">Fees</th><th class="num">Realized PnL</th></tr></thead>
+    <thead><tr><th>{{ group | capitalize }}</th><th class="num">Closes</th><th class="num">Fees</th><th class="num">Realized PnL</th></tr></thead>
     <tbody>
       {% for r in rows %}
       <tr>
-        <td><a href="/underlying/{{ r.group }}?{{ filter_query }}">{{ r.group }}</a></td>
+        <td>
+          {%- if group == "underlying" -%}
+            <a href="/underlying/{{ r.group }}?{{ filter_query }}">{{ r.group }}</a>
+          {%- else -%}{{ r.group }}{%- endif -%}
+        </td>
         <td class="num">{{ r.closes }}</td>
         <td class="num">{{ r.fees | money }}</td>
         <td class="num {{ r.realized_pnl | pnl_class }}">{{ r.realized_pnl | signed_money }}</td>

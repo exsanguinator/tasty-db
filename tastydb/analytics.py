@@ -16,11 +16,12 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from .marks import unrealized_pnl
-from .models import (
-    AssetType, Lot, LotClose, Mark, OptionType, ProcessingStatus, RawTransaction, Side,
-)
-from .structures import CUSTOM, LegShape, name_structure
-from .symbology import parse_future_option_symbol, parse_occ_symbol
+from .models import AssetType, Lot, LotClose, Mark, ProcessingStatus, RawTransaction, Side
+from .structures import CUSTOM
+
+# strategy group labels for rows the derived tables don't name
+UNNAMED = "Unnamed"
+UNMATCHED = "Unmatched"
 
 _CREDIT_ACTIONS = (
     "buy to open", "sell to open", "buy to close", "sell to close", "buy", "sell",
@@ -42,12 +43,15 @@ def realized_pnl(
     end: date | None = None,
     underlying: str | None = None,
     account: str | None = None,
-    group_by: str = "underlying",  # underlying | asset_type | close_reason
+    group_by: str = "underlying",  # underlying | asset_type | close_reason | strategy
 ) -> list[PnlRow]:
     group_col = {
         "underlying": LotClose.underlying_symbol,
         "asset_type": LotClose.asset_type,
         "close_reason": LotClose.close_reason,
+        # NULL only for closes whose lot predates a rebuild, but coalesce keeps
+        # them a visible row rather than a silently dropped SQL NULL group.
+        "strategy": func.coalesce(LotClose.strategy_name, UNNAMED),
     }[group_by]
 
     stmt = select(
@@ -85,7 +89,7 @@ def realized_pnl(
 
 @dataclass
 class CreditRow:
-    group: str  # underlying symbol
+    group: str  # underlying symbol, or strategy name when grouped by strategy
     trades: int
     credits: Decimal
 
@@ -120,16 +124,60 @@ def _credit_filters(stmt, start, end, underlying, account):
     return stmt
 
 
+def _strategy_of_transaction(session: Session) -> dict[int, str]:
+    """Broker transaction id -> strategy name, via the derived tables: a lot's
+    id IS its opening transaction, and lot_closes records the closing one.
+
+    Deliberately not a SQL join on lot_closes: one closing transaction can
+    close several lots, which would multiply that transaction's value across
+    the join and inflate the credits. Resolving to one name per transaction
+    first keeps every transaction counted exactly once. Ties (a close spanning
+    lots of different strategies) go to the lowest lot id, for determinism."""
+    names: dict[int, str] = {}
+    for txn_id, name in session.execute(
+        select(Lot.lot_id, Lot.strategy_name)
+    ):
+        names[txn_id] = name or CUSTOM
+    for txn_id, name in session.execute(
+        select(LotClose.broker_close_txn_id, LotClose.strategy_name)
+        .where(LotClose.broker_close_txn_id.is_not(None))
+        .order_by(LotClose.lot_id)
+    ):
+        names.setdefault(txn_id, name or CUSTOM)
+    return names
+
+
+def _credits_by_strategy(session, start, end, underlying, account) -> list[CreditRow]:
+    stmt = _credit_filters(
+        select(RawTransaction.id, _credit_signed_value()),
+        start, end, underlying, account,
+    )
+    names = _strategy_of_transaction(session)
+    totals: dict[str, Decimal] = defaultdict(Decimal)
+    trades: dict[str, int] = defaultdict(int)
+    for txn_id, value in session.execute(stmt):
+        group = names.get(txn_id, UNMATCHED)
+        totals[group] += Decimal(str(value or 0))
+        trades[group] += 1
+    rows = [CreditRow(group=g, trades=trades[g], credits=totals[g]) for g in totals]
+    rows.sort(key=lambda r: r.credits, reverse=True)
+    return rows
+
+
 def credits_collected(
     session: Session,
     start: date | None = None,
     end: date | None = None,
     underlying: str | None = None,
     account: str | None = None,
+    group_by: str = "underlying",  # underlying | strategy
 ) -> list[CreditRow]:
     """Cash collected selling minus cash paid buying, from raw trade actions
     (Trade rows, assignment/exercise delivery legs, and cash-settled
-    exercise/assignment rows), grouped by underlying. Gross of fees."""
+    exercise/assignment rows), grouped by underlying or by strategy. Gross of
+    fees."""
+    if group_by == "strategy":
+        return _credits_by_strategy(session, start, end, underlying, account)
     signed_value = _credit_signed_value()
     stmt = _credit_filters(
         select(
@@ -305,12 +353,6 @@ class StrategyLeg:
     side: Side
     quantity: Decimal
     realized_pnl: Decimal
-    # Parsed out of the symbol — lot_closes doesn't store these, but the OCC /
-    # future-option symbol encodes them. None for stock and outright futures.
-    option_type: OptionType | None = None
-    strike: Decimal | None = None
-    expiration: date | None = None
-    asset_type: AssetType | None = None
 
 
 @dataclass
@@ -327,23 +369,6 @@ class StrategyRow:
     lot_ids: list[int] = field(default_factory=list)
     chain_id: int | None = None  # roll chain this strategy belongs to, if any
     strategy_name: str = CUSTOM  # derived leg shape, e.g. "Iron condor"
-
-
-def _parse_leg_symbol(symbol: str, asset_type: AssetType) -> dict:
-    """Strike / expiry / call-put for an option leg, empty for anything else."""
-    if asset_type is AssetType.equity_option:
-        parsed = parse_occ_symbol(symbol)
-    elif asset_type is AssetType.future_option:
-        parsed = parse_future_option_symbol(symbol)
-    else:
-        parsed = None
-    if parsed is None:
-        return {}
-    return {
-        "option_type": parsed.option_type,
-        "strike": parsed.strike,
-        "expiration": parsed.expiration_date,
-    }
 
 
 def strategies(
@@ -371,11 +396,9 @@ def strategies(
         for c in group:
             leg = legs.get((c.symbol, c.side))
             if leg is None:
-                parsed = _parse_leg_symbol(c.symbol, c.asset_type)
                 legs[(c.symbol, c.side)] = StrategyLeg(
                     symbol=c.symbol, side=c.side,
                     quantity=c.quantity_closed, realized_pnl=c.realized_pnl,
-                    asset_type=c.asset_type, **parsed,
                 )
             else:
                 leg.quantity += c.quantity_closed
@@ -392,14 +415,7 @@ def strategies(
             close_reasons=sorted({c.close_reason.value for c in group}),
             lot_ids=sorted({c.lot_id for c in group}),
             chain_id=next((c.chain_id for c in group if c.chain_id is not None), None),
-            strategy_name=name_structure([
-                LegShape(
-                    side=l.side, option_type=l.option_type, strike=l.strike,
-                    expiration=l.expiration, quantity=l.quantity,
-                    asset_type=l.asset_type,
-                )
-                for l in legs.values()
-            ]),
+            strategy_name=group[0].strategy_name or CUSTOM,
         ))
     rows.sort(key=lambda r: r.close_date, reverse=True)
     return rows[:limit]

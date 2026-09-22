@@ -98,6 +98,7 @@ Lot-based, fee-inclusive realized PnL from actual fills:
 tastydb pnl --start 2026-01-01 --end 2026-06-30   # a date window
 tastydb pnl --underlying SPX                      # one underlying
 tastydb pnl --group-by close_reason               # trade vs expiry vs assignment...
+tastydb pnl --group-by strategy                   # iron condors vs strangles vs...
 ```
 
 Sample output:
@@ -132,6 +133,7 @@ vs. cash out from trading, including cash-settled index option expirations
 ```sh
 tastydb credits --start 2026-01-01 --end 2026-06-30   # a date window
 tastydb credits --underlying SPX                      # one underlying
+tastydb credits --group-by strategy                   # by structure, not symbol
 ```
 
 Sample output:

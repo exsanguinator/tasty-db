@@ -129,21 +129,26 @@ def create_app(config: Config) -> FastAPI:
         )
         return templates.TemplateResponse(request, template, context)
 
+    def group_choice(request: Request) -> str:
+        """`?group=strategy` switches a by-underlying panel to by-strategy."""
+        return "strategy" if request.query_params.get("group") == "strategy" else "underlying"
+
     @app.get("/")
     def overview(request: Request):
         f = filters_from(request)
+        group = group_choice(request)
         with session_factory() as session:
-            by_underlying = realized_pnl(session, **f, group_by="underlying")
+            rows = realized_pnl(session, **f, group_by=group)
             by_reason = realized_pnl(session, **f, group_by="close_reason")
             points = realized_timeseries(session, **f)
             has_lots = session.execute(select(Lot.lot_id).limit(1)).first() is not None
-        total = sum((r.realized_pnl for r in by_underlying), Decimal("0"))
-        fees = sum((r.fees for r in by_underlying), Decimal("0"))
-        closes = sum(r.closes for r in by_underlying)
+        total = sum((r.realized_pnl for r in rows), Decimal("0"))
+        fees = sum((r.fees for r in rows), Decimal("0"))
+        closes = sum(r.closes for r in rows)
         return render(
             request, "overview.html",
             total=total, fees=fees, closes=closes,
-            rows=by_underlying,
+            rows=rows, group=group,
             by_reason=by_reason,
             chart_labels=[p[0].isoformat() for p in points],
             chart_values=[float(p[2]) for p in points],
@@ -153,14 +158,15 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/credits")
     def credits_page(request: Request):
         f = filters_from(request)
+        group = group_choice(request)
         with session_factory() as session:
-            rows = credits_collected(session, **f)
+            rows = credits_collected(session, **f, group_by=group)
             points = credits_timeseries(session, **f)
         total = sum((r.credits for r in rows), Decimal("0"))
         trades = sum(r.trades for r in rows)
         return render(
             request, "credits.html",
-            total=total, trades=trades, rows=rows,
+            total=total, trades=trades, rows=rows, group=group,
             chart_labels=[p[0].isoformat() for p in points],
             chart_values=[float(p[2]) for p in points],
         )

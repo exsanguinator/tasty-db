@@ -33,6 +33,9 @@ from .returns import period_returns
 
 log = logging.getLogger(__name__)
 
+# a few raw rows carry no underlying symbol (e.g. cash-index settlements)
+NO_GROUP = "(none)"
+
 
 class App:
     def __init__(self, config: Config):
@@ -183,7 +186,8 @@ def process(app: App, method: str | None, offline: bool):
 @click.option("--end", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
 @click.option("--underlying", default=None, help="Filter to one underlying symbol")
 @click.option("--account", default=None, help="Filter to one account")
-@click.option("--group-by", type=click.Choice(["underlying", "asset_type", "close_reason"]),
+@click.option("--group-by",
+              type=click.Choice(["underlying", "asset_type", "close_reason", "strategy"]),
               default="underlying")
 @click.pass_obj
 def pnl(app: App, start, end, underlying: str | None, account: str | None, group_by: str):
@@ -200,19 +204,21 @@ def pnl(app: App, start, end, underlying: str | None, account: str | None, group
     if not rows:
         click.echo("no realized closes in range")
         return
-    header = f"{group_by:<20} {'closes':>7} {'qty':>10} {'fees':>12} {'realized pnl':>14}"
+    # strategy names run long ("Broken-wing call butterfly")
+    w = 28 if group_by == "strategy" else 20
+    header = f"{group_by:<{w}} {'closes':>7} {'qty':>10} {'fees':>12} {'realized pnl':>14}"
     click.echo(header)
     click.echo("-" * len(header))
     total_fees = total_pnl = Decimal("0")
     for row in rows:
         click.echo(
-            f"{row.group:<20} {row.closes:>7} {row.quantity_closed:>10.2f} "
+            f"{row.group or NO_GROUP:<{w}} {row.closes:>7} {row.quantity_closed:>10.2f} "
             f"{row.fees:>12.2f} {row.realized_pnl:>14.2f}"
         )
         total_fees += row.fees
         total_pnl += row.realized_pnl
     click.echo("-" * len(header))
-    click.echo(f"{'TOTAL':<20} {'':>7} {'':>10} {total_fees:>12.2f} {total_pnl:>14.2f}")
+    click.echo(f"{'TOTAL':<{w}} {'':>7} {'':>10} {total_fees:>12.2f} {total_pnl:>14.2f}")
 
 
 @main.command()
@@ -220,9 +226,12 @@ def pnl(app: App, start, end, underlying: str | None, account: str | None, group
 @click.option("--end", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
 @click.option("--underlying", default=None, help="Filter to one underlying symbol")
 @click.option("--account", default=None, help="Filter to one account")
+@click.option("--group-by", type=click.Choice(["underlying", "strategy"]),
+              default="underlying")
 @click.pass_obj
-def credits(app: App, start, end, underlying: str | None, account: str | None):
-    """Credits collected (sells minus buys) over a date range, by underlying."""
+def credits(app: App, start, end, underlying: str | None, account: str | None,
+            group_by: str):
+    """Credits collected (sells minus buys) over a date range."""
     with app.session_factory() as session:
         rows = credits_collected(
             session,
@@ -230,19 +239,21 @@ def credits(app: App, start, end, underlying: str | None, account: str | None):
             end=end.date() if end else None,
             underlying=underlying,
             account=account,
+            group_by=group_by,
         )
     if not rows:
         click.echo("no trades in range")
         return
-    header = f"{'underlying':<20} {'trades':>7} {'credits':>14}"
+    w = 28 if group_by == "strategy" else 20
+    header = f"{group_by:<{w}} {'trades':>7} {'credits':>14}"
     click.echo(header)
     click.echo("-" * len(header))
     total_credits = Decimal("0")
     for row in rows:
-        click.echo(f"{row.group:<20} {row.trades:>7} {row.credits:>14.2f}")
+        click.echo(f"{row.group or NO_GROUP:<{w}} {row.trades:>7} {row.credits:>14.2f}")
         total_credits += row.credits
     click.echo("-" * len(header))
-    click.echo(f"{'TOTAL':<20} {'':>7} {total_credits:>14.2f}")
+    click.echo(f"{'TOTAL':<{w}} {'':>7} {total_credits:>14.2f}")
 
 
 @main.command()

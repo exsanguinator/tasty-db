@@ -6,18 +6,24 @@ OTO/OCO linkage rather than leg shape, and transaction payloads have nothing
 either. The broker's own "Order Chain" names are computed client-side, so we
 derive ours the same way — from the shape of the legs entered together.
 
-Pure functions, no DB and no I/O: `name_structure` takes `LegShape`s and
-returns a label, falling back to "Custom" for anything unrecognized (same
-fallback the broker's UI uses).
+`name_structure` is pure: it takes `LegShape`s and returns a label, falling
+back to "Custom" for anything unrecognized (same fallback the broker's UI
+uses). `assign_strategy_names` is the one place that name reaches the DB —
+`rebuild_lots` calls it to stamp `strategy_name` on every lot and close, so
+reports can aggregate by strategy in SQL.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 from .models import AssetType, OptionType, Side
+
+if TYPE_CHECKING:
+    from .models import Lot, LotClose
 
 CUSTOM = "Custom"
 
@@ -143,3 +149,45 @@ def name_structure(legs: Sequence[LegShape]) -> str:
     if len(legs) == 4:
         return _iron(options)
     return CUSTOM
+
+
+# -- stamping (called from matching.rebuild_lots) ------------------------------
+
+
+def assign_strategy_names(lots: list["Lot"], closes: list["LotClose"]) -> int:
+    """Stamp `strategy_name` on lots and closes; returns the number of groups.
+
+    Grouping key is (account, open_order_id) — the legs of one order form one
+    structure. Lots with no opening order (assignment deliveries, sweeps) are
+    named individually. Closes inherit from their lot, exactly as chain_id does.
+    Unlike the strategies view this needs no symbol parsing: lots store
+    strike/expiry/right as columns.
+    """
+    groups: dict[object, list] = defaultdict(list)
+    for lot in lots:
+        key = ((lot.account_id, lot.open_order_id) if lot.open_order_id is not None
+               else ("lot", lot.lot_id))
+        groups[key].append(lot)
+
+    for group in groups.values():
+        by_symbol: dict[str, LegShape] = {}
+        for lot in group:
+            leg = by_symbol.get(lot.symbol)
+            if leg is None:
+                by_symbol[lot.symbol] = LegShape(
+                    side=lot.side, option_type=lot.option_type, strike=lot.strike,
+                    expiration=lot.expiration_date, quantity=lot.original_quantity,
+                    asset_type=lot.asset_type,
+                )
+            else:
+                by_symbol[lot.symbol] = replace(
+                    leg, quantity=leg.quantity + lot.original_quantity
+                )
+        name = name_structure(list(by_symbol.values()))
+        for lot in group:
+            lot.strategy_name = name
+
+    lot_names = {lot.lot_id: lot.strategy_name for lot in lots}
+    for close in closes:
+        close.strategy_name = lot_names.get(close.lot_id)
+    return len(groups)

@@ -155,6 +155,10 @@ class Lot(Base):
     # belongs to, stamped by chains.assign_chains during `process`. NULL unless
     # the lot is linked to at least one other order by a roll.
     chain_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    # structure the opening order formed ("Iron condor", "Short strangle"),
+    # stamped by structures.assign_strategy_names during `process`. Every lot
+    # of one opening order shares it; NULL only before a rebuild.
+    strategy_name: Mapped[str | None] = mapped_column(String(64), index=True)
 
     closes: Mapped[list["LotClose"]] = relationship(
         back_populates="lot", foreign_keys="LotClose.lot_id"
@@ -198,6 +202,7 @@ class LotClose(Base):
     open_order_id: Mapped[int | None] = mapped_column(BigInteger, index=True)  # from the lot
     close_order_id: Mapped[int | None] = mapped_column(BigInteger)  # from the closing txn
     chain_id: Mapped[int | None] = mapped_column(BigInteger, index=True)  # from the lot
+    strategy_name: Mapped[str | None] = mapped_column(String(64), index=True)  # from the lot
 
     lot: Mapped[Lot] = relationship(back_populates="closes", foreign_keys=[lot_id])
     linked_lot: Mapped[Lot | None] = relationship(foreign_keys=[linked_lot_id])

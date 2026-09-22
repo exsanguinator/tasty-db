@@ -22,7 +22,7 @@ Rules:
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -30,7 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import Lot, LotClose, Side
-from .structures import CUSTOM, LegShape, name_structure
+from .structures import CUSTOM
 
 ZERO = Decimal("0")
 Q_MONEY = Decimal("0.0001")
@@ -115,25 +115,6 @@ def _close_cash(close: LotClose) -> Decimal:
     return (sign * close.close_price * close.quantity_closed * close.multiplier).quantize(Q_MONEY)
 
 
-def _name_lots(lots: list[Lot]) -> str:
-    """Structure name for the lots one order opened. Unlike the strategies
-    view this needs no symbol parsing — lots store strike/expiry/right."""
-    by_symbol: dict[str, LegShape] = {}
-    for lot in lots:
-        leg = by_symbol.get(lot.symbol)
-        if leg is None:
-            by_symbol[lot.symbol] = LegShape(
-                side=lot.side, option_type=lot.option_type, strike=lot.strike,
-                expiration=lot.expiration_date, quantity=lot.original_quantity,
-                asset_type=lot.asset_type,
-            )
-        else:
-            by_symbol[lot.symbol] = replace(
-                leg, quantity=leg.quantity + lot.original_quantity
-            )
-    return name_structure(list(by_symbol.values()))
-
-
 # -- chain analytics -------------------------------------------------------------
 
 
@@ -214,7 +195,7 @@ def _summarize(chain_id: int, lots: list[Lot], closes: list[LotClose],
         fees=sum((l.open_fees for l in lots), ZERO) + sum((c.close_fees for c in closes), ZERO),
         open_quantity=open_qty,
         days_in_trade=(end - first_open.date()).days,
-        strategy_name=_name_lots(_latest_opened(lots)),
+        strategy_name=_latest_opened(lots)[0].strategy_name or CUSTOM,
     )
     if not detail:
         return ChainSummary(**kwargs)
@@ -264,7 +245,7 @@ def _build_steps(lots: list[Lot], closes: list[LotClose]) -> list[ChainStep]:
         else:
             st.kind = "close"
         if st.opened:
-            st.strategy_name = _name_lots(st.opened)
+            st.strategy_name = st.opened[0].strategy_name or CUSTOM
         running += st.cash
         st.running_cash = running
         st.opened.sort(key=lambda l: l.symbol)

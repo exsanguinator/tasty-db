@@ -68,12 +68,17 @@ expiries, quantities) — "Iron condor", "Short strangle", "Superbull" —
 falling back to "Custom" (~0.8% of real orders), the same fallback the
 broker's own Order Chain display uses. The API has no strategy-name field to
 sync: order objects carry only `leg-count`/prices, and `complex-order-id`/
-`-tag` describe OTO/OCO linkage, not leg shape. `StrategyLeg` re-parses
-strike/expiry/right out of the symbol (`lot_closes` doesn't store them), so
-new rules need no migration. Chains name structures too (from `Lot` columns
-directly, no parsing): per step, and `ChainSummary.strategy_name` = what the
-latest opening order rolled into. Roll chains: a roll order's id appears
-as both `close_order_id` on the old lots' closes and `open_order_id` on the
+`-tag` describe OTO/OCO linkage, not leg shape. The name is computed in
+exactly one place — `structures.assign_strategy_names` (end of `rebuild_lots`,
+before `assign_chains`) stamps `strategy_name` on every lot from the `Lot`
+columns (no symbol parsing) and closes inherit it from their lot — so
+strategies, chains, `pnl --group-by strategy`, `credits --group-by strategy`
+and the dashboard toggles all read the stored column. Credits group by
+strategy in Python via `dict[txn_id, name]` (lot_id IS the opening txn id,
+`lot_closes.broker_close_txn_id` the closing one); joining `lot_closes` in SQL
+instead would multiply a close spanning several lots and inflate credits.
+
+Roll chains: a roll order's id appears as both `close_order_id` on the old lots' closes and `open_order_id` on the
 new lots; `chains.assign_chains` (end of `rebuild_lots`) union-finds those
 links per (account, underlying) and stamps `chain_id` = the root (earliest)
 opening order id. Only real chains (≥2 linked orders) get one; order-less

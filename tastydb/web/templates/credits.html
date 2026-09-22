@@ -19,13 +19,17 @@
 </div>
 
 <div class="panel">
-  <h2>By underlying</h2>
+  <h2>By {{ group }} {% include "_group_toggle.html" %}</h2>
   <table>
-    <thead><tr><th>Underlying</th><th class="num">Trades</th><th class="num">Credits</th></tr></thead>
+    <thead><tr><th>{{ group | capitalize }}</th><th class="num">Trades</th><th class="num">Credits</th></tr></thead>
     <tbody>
       {% for r in rows %}
       <tr>
-        <td><a href="/underlying/{{ r.group }}?{{ filter_query }}">{{ r.group }}</a></td>
+        <td>
+          {%- if group == "underlying" -%}
+            <a href="/underlying/{{ r.group }}?{{ filter_query }}">{{ r.group }}</a>
+          {%- else -%}{{ r.group }}{%- endif -%}
+        </td>
         <td class="num">{{ r.trades }}</td>
         <td class="num {{ r.credits | pnl_class }}">{{ r.credits | signed_money }}</td>
       </tr>

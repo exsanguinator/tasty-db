@@ -84,6 +84,9 @@ main { max-width: 1100px; margin: 0 auto; padding: 20px 24px 60px; }
 .panel h2 { margin: 0 0 10px; font-size: 15px; }
 .panel .sub { color: var(--muted); font-size: 12px; margin-left: 8px; font-weight: 400; }
 
+.panel .toggle { float: right; margin-left: 12px; }
+.panel .toggle .on { color: var(--ink); font-weight: 600; }
+
 .chart-wrap { position: relative; height: 260px; }
 
 table { border-collapse: collapse; width: 100%; }

@@ -1,0 +1,12 @@
+{# Underlying | Strategy switch for a grouped panel. Needs `group`; keeps the
+   page's date/account filters via filter_query. #}
+<span class="sub toggle">
+  {%- for key, label in [("underlying", "Underlying"), ("strategy", "Strategy")] %}
+    {%- if not loop.first %} | {% endif -%}
+    {%- if group == key -%}
+      <span class="on">{{ label }}</span>
+    {%- else -%}
+      <a href="?group={{ key }}{% if filter_query %}&amp;{{ filter_query }}{% endif %}">{{ label }}</a>
+    {%- endif -%}
+  {%- endfor %}
+</span>
