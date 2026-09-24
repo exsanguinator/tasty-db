@@ -27,7 +27,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from .client import ApiError, TastyClient
-from .models import AssetType, InstrumentMeta, SettlementType
+from .models import AssetType, InstrumentMeta, OptionType, SettlementType
 from .symbology import parse_future_symbol, parse_future_option_symbol, parse_occ_symbol
 
 log = logging.getLogger(__name__)
@@ -94,6 +94,18 @@ def future_option_multiplier(payload: dict) -> Decimal | None:
     return None
 
 
+def option_fields(payload: dict) -> tuple[OptionType | None, date | None]:
+    """(option_type, expiration_date) from an option instrument payload —
+    authoritative where symbol parsing may not cope with a new symbol shape."""
+    cp = payload.get("option-type")
+    option_type = {"C": OptionType.call, "P": OptionType.put}.get(cp or "")
+    try:
+        expiration = date.fromisoformat(payload["expiration-date"])
+    except (KeyError, TypeError, ValueError):
+        expiration = None
+    return option_type, expiration
+
+
 class MetaProvider:
     """Resolves and caches InstrumentMeta rows. Pass client=None for offline use."""
 
@@ -113,7 +125,15 @@ class MetaProvider:
                 for attr in ("underlying_symbol", "multiplier", "settlement_type",
                              "strike", "option_type", "expiration_date", "contract_code"):
                     setattr(meta, attr, getattr(fresh, attr))
-            elif (
+            elif meta.source == "api" and meta.payload and meta.asset_type in (
+                AssetType.equity_option, AssetType.future_option
+            ):
+                # Self-heal rows cached while symbol parsing missed their shape
+                # (e.g. 6-char future-option roots): the payload has the truth.
+                option_type, expiration = option_fields(meta.payload)
+                meta.option_type = meta.option_type or option_type
+                meta.expiration_date = meta.expiration_date or expiration
+            if (
                 meta.source == "api"
                 and meta.asset_type == AssetType.future_option
                 and meta.payload
@@ -155,6 +175,7 @@ class MetaProvider:
         if asset_type == AssetType.equity_option:
             d = self._client.equity_option(symbol)
             parsed = parse_occ_symbol(symbol)
+            option_type, expiration = option_fields(d)
             return InstrumentMeta(
                 symbol=symbol,
                 asset_type=asset_type,
@@ -162,8 +183,8 @@ class MetaProvider:
                 multiplier=Decimal(str(d.get("shares-per-contract") or 100)),
                 settlement_type=_settlement_from_str(d.get("settlement-type")),
                 strike=Decimal(str(d["strike-price"])) if d.get("strike-price") else (parsed.strike if parsed else None),
-                option_type=(parsed.option_type if parsed else None),
-                expiration_date=(parsed.expiration_date if parsed else None),
+                option_type=option_type or (parsed.option_type if parsed else None),
+                expiration_date=expiration or (parsed.expiration_date if parsed else None),
                 source="api",
                 payload=d,
             )
@@ -193,6 +214,7 @@ class MetaProvider:
         if asset_type == AssetType.future_option:
             d = self._client.future_option(symbol)
             parsed = parse_future_option_symbol(symbol)
+            option_type, expiration = option_fields(d)
             product = d.get("future-option-product") or {}
             if product.get("cash-settled") is not None:
                 settlement = (
@@ -211,8 +233,8 @@ class MetaProvider:
                 multiplier=multiplier,
                 settlement_type=settlement,
                 strike=Decimal(str(d["strike-price"])) if d.get("strike-price") else (parsed.strike if parsed else None),
-                option_type=(parsed.option_type if parsed else None),
-                expiration_date=(parsed.expiration_date if parsed else None),
+                option_type=option_type or (parsed.option_type if parsed else None),
+                expiration_date=expiration or (parsed.expiration_date if parsed else None),
                 contract_code=d.get("product-code") or (parsed.product_code if parsed else None),
                 source="api",
                 payload=d,

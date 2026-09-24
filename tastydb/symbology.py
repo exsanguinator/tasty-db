@@ -9,7 +9,10 @@ Formats (from the API Overview doc):
                  ("./" + future symbol space-padded to 5 + option root
                  space-padded to 5), a space, then yymmdd + C/P + strike (in
                  display units). 5-char future symbols leave no space before
-                 the root: "./MESM1EX3K1 210521P2920".
+                 the root: "./MESM1EX3K1 210521P2920". Option roots can
+                 also run to 6 chars (4-char product + month + year, e.g.
+                 CME weekly "MN3EV6"), overflowing the head so the date
+                 follows with no space: "./MNQZ6MN3EV6261016P30000".
 """
 
 from __future__ import annotations
@@ -25,7 +28,11 @@ FUTURE_MONTH_CODES = "FGHJKMNQUVXZ"
 
 _FUTURE_RE = re.compile(rf"^/?([A-Z0-9]+?)([{FUTURE_MONTH_CODES}])(\d{{1,2}})$")
 _OCC_RE = re.compile(r"^(\S{1,6})\s+(\d{6})([CP])(\d{8})$")
-_FUT_OPT_LEG_RE = re.compile(r"^(\d{6})([CP])(\d+(?:\.\d+)?)$")
+# "./" + future (fixed 5-wide) + option root (1-6 chars, space-padded when
+# short) + yymmdd + C/P + strike. Anchoring the date+C/P right after the root
+# makes the lazy root unambiguous: a shorter root would put a digit where C/P
+# must be.
+_FUT_OPT_RE = re.compile(r"^\./(.{5})(\S{1,6}?) *(\d{6})([CP])(\d+(?:\.\d+)?)$")
 
 
 @dataclass
@@ -68,18 +75,19 @@ class ParsedFutureOption:
 def parse_future_option_symbol(symbol: str) -> ParsedFutureOption | None:
     """Parse a TW future option symbol like './ESZ9 EW4U9 190927P2975' or
     './MESM1EX3K1 210521P2920' (no space in the head when fields are full)."""
-    symbol = symbol.rstrip()
-    if not symbol.startswith("./") or len(symbol) < 14 or symbol[12] != " ":
-        return None
-    m = _FUT_OPT_LEG_RE.match(symbol[13:])
+    m = _FUT_OPT_RE.match(symbol.rstrip())
     if not m:
         return None
-    ymd, cp, strike = m.groups()
-    underlying = "/" + symbol[2:7].strip()
+    future, _root, ymd, cp, strike = m.groups()
+    try:
+        expiration = datetime.strptime(ymd, "%y%m%d").date()
+    except ValueError:
+        return None
+    underlying = "/" + future.strip()
     return ParsedFutureOption(
         underlying_future=underlying,
         product_code=parse_future_symbol(underlying),
-        expiration_date=datetime.strptime(ymd, "%y%m%d").date(),
+        expiration_date=expiration,
         option_type=OptionType.call if cp == "C" else OptionType.put,
         strike=Decimal(strike),
     )

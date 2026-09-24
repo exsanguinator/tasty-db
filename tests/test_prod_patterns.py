@@ -1,6 +1,7 @@
 """Regression tests for transaction shapes observed in real production data
 (2026-07 backfill) that the docs don't spell out."""
 
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from tastydb.models import (
     InstrumentMeta,
     LotClose,
     Lot,
+    OptionType,
     ProcessingStatus,
     RawTransaction,
 )
@@ -24,6 +26,20 @@ def test_parse_future_option_with_full_width_head():
     assert parsed.underlying_future == "/MESM1"
     assert parsed.product_code == "MES"
     assert parsed.strike == Decimal("2920")
+
+
+def test_parse_future_option_with_six_char_root():
+    # CME weekly roots like MN3EV6 (MN3E + V6) overflow the 5-wide root
+    # field, so the date follows with no space (seen on /MNQZ6, 2026-09)
+    parsed = parse_future_option_symbol("./MNQZ6MN3EV6261016P30000")
+    assert parsed.underlying_future == "/MNQZ6"
+    assert parsed.product_code == "MNQ"
+    assert parsed.expiration_date == date(2026, 10, 16)
+    assert parsed.option_type == OptionType.put
+    assert parsed.strike == Decimal("30000")
+    parsed = parse_future_option_symbol("./MNQZ6MN5EV6261030C33000")
+    assert parsed.option_type == OptionType.call
+    assert parsed.expiration_date == date(2026, 10, 30)
 
 
 def test_cash_settlement_double_transaction_pattern(session):
@@ -173,6 +189,32 @@ def test_cached_api_future_option_row_is_self_healed(session):
     assert close.realized_pnl == Decimal("300")  # (10 - 4) * 1 * 50
     meta = session.get(InstrumentMeta, sym)
     assert meta.multiplier == Decimal("50")
+
+
+def test_cached_api_row_missing_option_fields_is_healed_from_payload(session):
+    """A symbol shape the parser missed left option_type/expiration NULL on an
+    API-cached row (lot named "Short future"); the payload fills them in."""
+    sym = "./MNQZ6MN3EV6261016P30000"
+    session.add(InstrumentMeta(
+        symbol=sym, asset_type="future_option", multiplier=Decimal("2"),
+        strike=Decimal("30000"), source="api",
+        payload={"notional-value": "0.02", "display-factor": "0.01",
+                 "option-type": "P", "expiration-date": "2026-10-16"},
+    ))
+    session.commit()
+    run_pipeline(
+        session,
+        [
+            make_txn(action="Sell to Open", symbol=sym, underlying="/MNQZ6",
+                     instrument_type="Future Option", quantity=1, price=850.0,
+                     value=1700.0, value_effect="Credit",
+                     executed_at="2026-09-09T16:08:01+00:00"),
+        ],
+    )
+    lot = session.execute(select(Lot)).scalar_one()
+    assert lot.option_type == OptionType.put
+    assert lot.expiration_date == date(2026, 10, 16)
+    assert lot.strategy_name == "Short put"
 
 
 def test_manual_meta_rows_are_never_recomputed(session):
