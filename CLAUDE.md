@@ -80,6 +80,10 @@ the credit transactions no lot claims. Credits group by
 strategy in Python via `dict[txn_id, name]` (lot_id IS the opening txn id,
 `lot_closes.broker_close_txn_id` the closing one); joining `lot_closes` in SQL
 instead would multiply a close spanning several lots and inflate credits.
+Credits also include futures `Money Movement`/`Mark to Market` rows (a
+futures trade's `value` is only the cash since the prior daily settlement);
+they belong to no lot, so they take the strategy of the futures lot held at
+the mark (`analytics._mtm_strategy_resolver`, close-at-the-instant counts).
 
 Roll chains: a roll order's id appears as both `close_order_id` on the old lots' closes and `open_order_id` on the
 new lots; `chains.assign_chains` (end of `rebuild_lots`) union-finds those

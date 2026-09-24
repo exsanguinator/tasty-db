@@ -1,6 +1,7 @@
 from datetime import date
+from decimal import Decimal
 
-from tastydb.analytics import credits_collected, credits_timeseries
+from tastydb.analytics import credits_collected, credits_timeseries, list_credit_transactions
 
 from .conftest import make_txn, run_pipeline
 
@@ -148,3 +149,68 @@ def test_credits_timeseries_accumulates_per_day(session):
     total = sum(r.credits for r in credits_collected(session))
     assert points[-1][2] == total
     assert credits_timeseries(session, underlying="MSFT") == [(date(2024, 1, 2), 500, 500)]
+
+
+def _nnq_trail():
+    """Real /NNQZ6 ($0.20/pt) trail, 2026-09: three shorts, bought back. Each
+    trade's `value` is only the cash since the prior daily settlement (sells
+    are 0); the rest arrives in Money Movement / Mark to Market rows."""
+    fut = dict(symbol="/NNQZ6", underlying="/NNQ", instrument_type="Future")
+
+    def mtm(qty, price, value, effect, at):
+        return make_txn(txn_type="Money Movement", sub_type="Mark to Market",
+                        quantity=qty, price=price, value=value, value_effect=effect,
+                        executed_at=at, **fut)
+
+    return [
+        make_txn(action="Sell", quantity=1, price=29751.5,
+                 executed_at="2026-09-17T17:02:10+00:00", **fut),
+        mtm(1, 29743.0, 1.7, "Credit", "2026-09-17T21:00:00+00:00"),
+        make_txn(action="Buy", quantity=1, price=29727.5, value=3.1, value_effect="Credit",
+                 executed_at="2026-09-18T16:55:11+00:00", **fut),
+        make_txn(action="Sell", quantity=1, price=30241.0,
+                 executed_at="2026-09-21T10:14:26+00:00", **fut),
+        mtm(1, 30785.0, 108.8, "Debit", "2026-09-21T21:00:00+00:00"),
+        make_txn(action="Sell", quantity=1, price=30843.0,
+                 executed_at="2026-09-21T23:24:35+00:00", **fut),
+        mtm(2, 31028.5, 85.8, "Debit", "2026-09-22T21:00:00+00:00"),
+        mtm(2, 30765.0, 105.4, "Credit", "2026-09-23T21:00:00+00:00"),
+        make_txn(action="Buy", quantity=2, price=30585.0, value=72.0, value_effect="Credit",
+                 executed_at="2026-09-24T07:12:01+00:00", **fut),
+    ]
+
+
+def test_futures_mark_to_market_rows_included(session):
+    """Trades alone gave +75.10; with the daily MTM rows the credits are the
+    position's real cash, = gross realized (-4.80 + 68.80 - 51.60) x 0.2."""
+    run_pipeline(session, _nnq_trail())
+    (row,) = credits_collected(session, underlying="/NNQ")
+    assert row.trades == 9
+    assert row.credits == Decimal("-12.40")
+
+
+def test_futures_mark_to_market_attributed_to_held_lot_strategy(session):
+    run_pipeline(session, _nnq_trail())
+    rows = credits_collected(session, group_by="strategy")
+    assert [(r.group, r.credits) for r in rows] == [("Short future", Decimal("-12.40"))]
+    txns, count, total = list_credit_transactions(session, strategy="Short future")
+    assert count == 9 and total == Decimal("-12.40")
+    assert sum(t.action == "Mark to Market" for t in txns) == 4
+
+
+def test_mark_to_market_at_close_instant_goes_to_closed_lot(session):
+    """A futures-option delivery closes the future stamped AT the settlement
+    time (real /ESH2 2022 data); that day's MTM still belongs to the lot,
+    while a close earlier the same day would not."""
+    fut = dict(symbol="/ESH2", underlying="/ES", instrument_type="Future")
+    run_pipeline(session, [
+        make_txn(action="Sell", quantity=1, price=4420.0,
+                 executed_at="2022-02-11T21:34:44+00:00", **fut),
+        make_txn(txn_type="Money Movement", sub_type="Mark to Market", quantity=1,
+                 price=4409.5, value=525.0, value_effect="Credit",
+                 executed_at="2022-02-11T22:00:00+00:00", **fut),
+        make_txn(action="Buy", quantity=1, price=4415.0, value=275.0, value_effect="Debit",
+                 executed_at="2022-02-11T22:00:00+00:00", **fut),
+    ])
+    rows = credits_collected(session, group_by="strategy")
+    assert [(r.group, r.credits) for r in rows] == [("Short future", Decimal("250"))]
