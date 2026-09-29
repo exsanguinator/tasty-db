@@ -95,16 +95,16 @@ cron job) keeps both your trade history and your performance data current.
 Lot-based, fee-inclusive realized PnL from actual fills:
 
 ```sh
-tastydb pnl --start 2026-01-01 --end 2026-06-30   # a date window
-tastydb pnl --underlying SPX                      # one underlying
-tastydb pnl --group-by close_reason               # trade vs expiry vs assignment...
-tastydb pnl --group-by strategy                   # iron condors vs strangles vs...
+tastydb realized --start 2026-01-01 --end 2026-06-30   # a date window
+tastydb realized --underlying SPX                      # one underlying
+tastydb realized --group-by close_reason               # trade vs expiry vs assignment...
+tastydb realized --group-by strategy                   # iron condors vs strangles vs...
 ```
 
 Sample output:
 
 ```
-$ tastydb pnl --start 2026-01-01 --end 2026-06-30
+$ tastydb realized --start 2026-01-01 --end 2026-06-30
 underlying            closes        qty         fees   realized pnl
 ------------------------------------------------------------------
 SPX                       42      96.00       312.48        8441.25
@@ -126,7 +126,7 @@ numbers with charts, filters, and drill-down to individual lots.
 
 A simple cash-flow view: every sell (to open or to close) is a credit, every
 buy (to open or to close) is a debit, summed over a date range and broken
-down by underlying. Unlike `pnl`, this isn't lot-matched — it's raw cash in
+down by underlying. Unlike `realized`, this isn't lot-matched — it's raw cash in
 vs. cash out from trading, including cash-settled index option expirations
 (e.g. SPX, XSP) and futures' daily mark-to-market settlements. (A futures
 trade itself only carries the cash since the previous day's settlement, so
@@ -161,17 +161,17 @@ trades behind that strategy's credits.
 ### "How is my account actually performing?" — net-liq returns
 
 Realized trade PnL deliberately excludes dividends, interest, fees on cash,
-and unrealized moves. For whole-account performance, use the returns view,
+and unrealized moves. For whole-account performance, use `tastydb pnl`,
 which works from daily net-liq and your external cash flows instead:
 
 ```sh
-tastydb returns --start 2026-01-01                # TWR + XIRR per account
+tastydb pnl --start 2026-01-01                         # TWR + XIRR per account
 ```
 
 Sample output:
 
 ```
-$ tastydb returns --start 2026-01-01
+$ tastydb pnl --start 2026-01-01
 account            from         to     start NLV       end NLV    net flows          PnL        TWR   TWR ann.      XIRR
 -------------------------------------------------------------------------------------------------------------------------
 Roth IRA     2026-01-02 2026-07-10      84210.55      92873.10      7000.00      1662.55      1.98%      4.03%      3.87%

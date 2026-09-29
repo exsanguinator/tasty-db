@@ -4,8 +4,9 @@
     tastydb accounts                       list account numbers (API)
     tastydb sync [--backfill] [--since D]  pull transactions into raw storage
     tastydb process [--method lifo]        classify + match into lots/closes
-    tastydb pnl --start D --end D          realized PnL report
+    tastydb realized --start D --end D     realized PnL report (lot-matched trades)
     tastydb credits --start D --end D      credits collected report
+    tastydb pnl --start D --end D          account PnL / returns (TWR, XIRR) from net-liq
     tastydb status                         ingest/processing overview
 """
 
@@ -190,7 +191,7 @@ def process(app: App, method: str | None, offline: bool):
               type=click.Choice(["underlying", "asset_type", "close_reason", "strategy"]),
               default="underlying")
 @click.pass_obj
-def pnl(app: App, start, end, underlying: str | None, account: str | None, group_by: str):
+def realized(app: App, start, end, underlying: str | None, account: str | None, group_by: str):
     """Realized PnL summed from lot closes over a date range."""
     with app.session_factory() as session:
         rows = realized_pnl(
@@ -261,8 +262,8 @@ def credits(app: App, start, end, underlying: str | None, account: str | None,
 @click.option("--end", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
 @click.option("--account", default=None, help="One account (default: each + combined)")
 @click.pass_obj
-def returns(app: App, start, end, account: str | None):
-    """Account-level returns (TWR / XIRR) from NLV snapshots + cash flows."""
+def pnl(app: App, start, end, account: str | None):
+    """Account-level PnL and returns (TWR / XIRR) from NLV snapshots + cash flows."""
     init_db(app.engine)
 
     def rate(value) -> str:
