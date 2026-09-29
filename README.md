@@ -119,7 +119,7 @@ TOTAL                                          417.53        8376.60
 This answers the *trading skill* question: for every position you closed, what
 did you make or lose? Expirations, assignments, exercises, and cash-settled
 index options are all booked at broker-reported values. In the dashboard, the
-**Overview**, **Closes**, **Strategies**, and **Chains** pages give the same
+**Realized**, **Closes**, **Strategies**, and **Chains** pages give the same
 numbers with charts, filters, and drill-down to individual lots.
 
 ### "How much premium have I collected?" — credits
@@ -187,7 +187,7 @@ COMBINED     2026-01-02 2026-07-10     236550.75     241863.85     -3000.00     
 
 Deposits, withdrawals, journals, and tax withholding are classified from the
 raw Money Movement history; transfers between your own accounts cancel out in
-the combined view. The dashboard's **Performance** page shows the net-liq
+the combined view. The dashboard's **Overview** page shows the net-liq
 chart, a flow-neutral growth-of-$100 chart, and the full cash-flow table.
 
 ### Comparing the two
@@ -203,14 +203,14 @@ where.
 
 | Page | What it shows |
 |---|---|
-| **Overview** | Realized PnL / fees, cumulative PnL chart, per-underlying breakdown (all underlyings, by realized PnL), toggleable to a per-strategy one |
-| **Closes** | Every realized close, filterable, linked to its lot |
+| **Overview** | Account performance: net-liq chart, growth-of-$100, TWR/XIRR, cash-flow table |
+| **Credits** | Credits collected (sells minus buys): total, cumulative credits chart, per-underlying or per-strategy breakdown |
+| **Realized** | Realized PnL / fees, cumulative PnL chart, per-underlying breakdown (all underlyings, by realized PnL), toggleable to a per-strategy one |
 | **Positions** | Open lots with cost basis and unrealized PnL from cached marks |
+| **Closes** | Every realized close, filterable, linked to its lot |
 | **Strategies** | Multi-leg orders reported as single trades, each named by its leg shape (Iron condor, Short strangle, Superbull, ...) |
 | **Chains** | Roll campaigns: every roll of a position as one story with total PnL, each step named by the structure it opened |
-| **Performance** | Net-liq chart, growth-of-$100, TWR/XIRR, cash-flow table |
-| **Credits** | Credits collected (sells minus buys): total, cumulative credits chart, per-underlying or per-strategy breakdown |
-| **Strategy** | One strategy name drilled down: its trades, its underlyings, and the individual credit-bearing transactions. Reached by clicking a row in the Overview or Credits *By strategy* table, or a name on the Strategies page |
+| **Strategy** | One strategy name drilled down: its trades, its underlyings, and the individual credit-bearing transactions. Reached by clicking a row in the Realized or Credits *By strategy* table, or a name on the Strategies page |
 
 Every view filters by account and date range. The only network call the
 dashboard ever makes is the optional *Refresh marks* button (live quotes for
@@ -224,10 +224,10 @@ statement. A few trades don't: futures options traded in the evening session
 (~6–7pm ET, which CME counts as the next trading day) or on exchange holidays,
 and crypto traded in the evening ET. Those can appear one day off from the
 broker's trade date. Totals over a date range only differ when a range starts
-or ends on one of those days. The **Performance** page uses the broker's trade
+or ends on one of those days. The **Overview** page uses the broker's trade
 dates.
 
-### Web Dashboard Sample Overview
+### Web Dashboard Sample (Realized page)
 
 <img width="2518" height="1560" alt="image" src="https://github.com/user-attachments/assets/00c5d0d5-a512-4a17-b212-53b07f7d9866" />
 

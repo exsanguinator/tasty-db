@@ -163,7 +163,7 @@ def _dashboard_client(session_payloads, tmp_path):
 def test_dashboard_routes_smoke(tmp_path):
     client = _dashboard_client(_vertical_payloads(), tmp_path)
 
-    home = client.get("/")
+    home = client.get("/realized")
     assert home.status_code == 200
     assert "Realized PnL" in home.text
     assert "XSP" in home.text
@@ -202,7 +202,7 @@ def test_dashboard_routes_smoke(tmp_path):
     assert "Cumulative credits" in credits_page.text
     assert '"labels": ["' in credits_page.text  # chart has data points
 
-    by_strategy = client.get("/?group=strategy")
+    by_strategy = client.get("/realized?group=strategy")
     assert by_strategy.status_code == 200
     assert "/strategy/Call%20credit%20spread" in by_strategy.text
     credits_by_strategy = client.get("/credits?group=strategy")

@@ -137,6 +137,24 @@ def create_app(config: Config) -> FastAPI:
     @app.get("/")
     def overview(request: Request):
         f = filters_from(request)
+        with session_factory() as session:
+            pr = period_returns(session, **f)
+            nlv = nlv_series(session, **f)
+            index = twr_index(session, **f)
+            flows = external_flows(session, **f)
+        flows.sort(key=lambda fl: (fl.date, fl.txn_id), reverse=True)
+        return render(
+            request, "overview.html",
+            pr=pr, flows=flows,
+            nlv_labels=[p[0].isoformat() for p in nlv],
+            nlv_values=[float(p[1]) for p in nlv],
+            idx_labels=[p[0].isoformat() for p in index],
+            idx_values=[float(p[1]) for p in index],
+        )
+
+    @app.get("/realized")
+    def realized_view(request: Request):
+        f = filters_from(request)
         group = group_choice(request)
         with session_factory() as session:
             rows = realized_pnl(session, **f, group_by=group)
@@ -147,7 +165,7 @@ def create_app(config: Config) -> FastAPI:
         fees = sum((r.fees for r in rows), Decimal("0"))
         closes = sum(r.closes for r in rows)
         return render(
-            request, "overview.html",
+            request, "realized.html",
             total=total, fees=fees, closes=closes,
             rows=rows, group=group,
             by_reason=by_reason,
@@ -244,22 +262,10 @@ def create_app(config: Config) -> FastAPI:
         return render(request, "chain.html", chain_id=chain_id, details=details)
 
     @app.get("/performance")
-    def performance_view(request: Request):
-        f = filters_from(request)
-        with session_factory() as session:
-            pr = period_returns(session, **f)
-            nlv = nlv_series(session, **f)
-            index = twr_index(session, **f)
-            flows = external_flows(session, **f)
-        flows.sort(key=lambda fl: (fl.date, fl.txn_id), reverse=True)
-        return render(
-            request, "performance.html",
-            pr=pr, flows=flows,
-            nlv_labels=[p[0].isoformat() for p in nlv],
-            nlv_values=[float(p[1]) for p in nlv],
-            idx_labels=[p[0].isoformat() for p in index],
-            idx_values=[float(p[1]) for p in index],
-        )
+    def performance_redirect(request: Request):
+        """Old URL of the Overview page; keeps bookmarks working."""
+        query = request.url.query
+        return RedirectResponse(f"/?{query}" if query else "/", status_code=301)
 
     @app.get("/lot/{lot_id}")
     def lot_view(request: Request, lot_id: int):

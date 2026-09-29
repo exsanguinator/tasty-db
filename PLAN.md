@@ -106,7 +106,7 @@ were still free:
       older gaps); `cashflows.py` classifies Money Movement into external
       flows vs performance by description (sub-types are unreliable);
       `returns.py` computes daily-chained TWR, XIRR (bisection), and dollar
-      PnL; `tastydb pnl` CLI (was `returns`) + dashboard `/performance` view with NLV
+      PnL; `tastydb pnl` CLI (was `returns`) + dashboard `/performance` view (now the Overview at `/`) with NLV
       and growth-of-$100 charts. Known caveat: one dormant account
       (1DA16486) has a broker-side data hole — its ~$5k funding/emptying
       transactions are absent from the API, distorting its dollar PnL and

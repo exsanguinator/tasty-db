@@ -1,5 +1,5 @@
 """Account-level returns: NLV series assembly, TWR chaining with flow
-attachment, XIRR, snapshot sync idempotency, and the /performance page."""
+attachment, XIRR, snapshot sync idempotency, and the Overview (/) page."""
 
 from datetime import date
 from decimal import Decimal
@@ -214,12 +214,17 @@ def test_dashboard_performance_page(tmp_path):
         snap(s, "2026-01-10", 2500)
         s.commit()
 
-    page = client.get("/performance")
+    page = client.get("/")
     assert page.status_code == 200
     assert "TWR" in page.text and "XIRR" in page.text
     assert "ACH DEPOSIT" in page.text
     assert "+$500.00" in page.text  # PnL = 2500 − 1000 − 1000
 
-    empty = client.get("/performance?start=2030-01-01")
+    empty = client.get("/?start=2030-01-01")
     assert empty.status_code == 200
     assert "Not enough balance snapshots" in empty.text
+
+    # the page's old URL redirects, keeping the filters
+    old = client.get("/performance?start=2030-01-01", follow_redirects=False)
+    assert old.status_code == 301
+    assert old.headers["location"] == "/?start=2030-01-01"
