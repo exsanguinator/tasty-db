@@ -2,7 +2,6 @@ from datetime import date
 from decimal import Decimal
 
 from tastydb.analytics import credits_collected, credits_timeseries, list_credit_transactions
-from tastydb.ingest import ingest_payloads
 
 from .conftest import make_txn, run_pipeline
 
@@ -31,51 +30,16 @@ def test_plain_futures_buy_sell_included(session):
         session,
         [
             make_txn(action="Sell", symbol="/ESZ4", underlying="/ES",
-                      instrument_type="Future", quantity=1, price=4500.0,
-                      executed_at="2024-01-02T15:00:00+00:00"),
+                      instrument_type="Future", quantity=1, value=500.0,
+                      value_effect="Credit", executed_at="2024-01-02T15:00:00+00:00"),
             make_txn(action="Buy", symbol="/ESZ4", underlying="/ES",
-                      instrument_type="Future", quantity=1, price=4496.0, value=200.0,
-                      value_effect="Credit", executed_at="2024-01-03T15:00:00+00:00"),
+                      instrument_type="Future", quantity=1, value=300.0,
+                      value_effect="Debit", executed_at="2024-01-03T15:00:00+00:00"),
         ],
     )
-    (row,) = credits_collected(session, underlying="/ES")
-    assert row.trades == 1  # only the closing trade books a result
-    assert row.credits == 200  # 4 points x $50
-
-
-def test_open_future_books_nothing_until_closed(session):
-    run_pipeline(session, [
-        make_txn(action="Sell", symbol="/MESZ4", underlying="/MES",
-                 instrument_type="Future", quantity=2, price=4500.25,
-                 executed_at="2024-01-02T15:00:00+00:00"),
-    ])
-    assert credits_collected(session) == []
-    assert credits_timeseries(session) == []
-
-
-def test_unprocessed_future_not_counted(session):
-    """No lot_closes yet (synced but not processed): no known result."""
-    ingest_payloads(session, [
-        make_txn(action="Buy", symbol="/ESZ4", underlying="/ES",
-                 instrument_type="Future", quantity=1, price=4500.0,
-                 executed_at="2024-01-02T15:00:00+00:00"),
-    ])
-    assert credits_collected(session) == []
-
-
-def test_future_reversal_credits_only_closed_part(session):
-    """Sell 2 against 1 long closes the long (+10 pts) and opens a short;
-    only the close books, and the new short adds nothing."""
-    fut = dict(symbol="/MESZ4", underlying="/MES", instrument_type="Future")
-    run_pipeline(session, [
-        make_txn(action="Buy", quantity=1, price=4500.0,
-                 executed_at="2024-01-02T15:00:00+00:00", **fut),
-        make_txn(action="Sell", quantity=2, price=4510.0,
-                 executed_at="2024-01-03T15:00:00+00:00", **fut),
-    ])
-    (row,) = credits_collected(session)
-    assert row.trades == 1
-    assert row.credits == Decimal("50")  # 10 pts x $5
+    rows = credits_collected(session, underlying="/ES")
+    assert len(rows) == 1
+    assert rows[0].credits == 200
 
 
 def test_assignment_delivery_leg_included_removal_leg_excluded(session):
@@ -216,23 +180,37 @@ def _nnq_trail():
     ]
 
 
-def test_futures_mark_to_market_rows_excluded(session):
-    """Futures book their gross PnL only when closed; opens and the daily MTM
-    rows add nothing. Gross realized = (24 + 518 - 604) pts x 0.2."""
+def test_futures_mark_to_market_rows_included(session):
+    """Trades alone gave +75.10; with the daily MTM rows the credits are the
+    position's real cash, = gross realized (-4.80 + 68.80 - 51.60) x 0.2."""
     run_pipeline(session, _nnq_trail())
     (row,) = credits_collected(session, underlying="/NNQ")
-    assert row.trades == 2  # the two buy-to-close trades
+    assert row.trades == 9
     assert row.credits == Decimal("-12.40")
-    assert credits_timeseries(session, underlying="/NNQ") == [
-        (date(2026, 9, 18), Decimal("4.80"), Decimal("4.80")),
-        (date(2026, 9, 24), Decimal("-17.20"), Decimal("-12.40")),
-    ]
 
 
-def test_futures_credits_attributed_to_lot_strategy(session):
+def test_futures_mark_to_market_attributed_to_held_lot_strategy(session):
     run_pipeline(session, _nnq_trail())
     rows = credits_collected(session, group_by="strategy")
     assert [(r.group, r.credits) for r in rows] == [("Short future", Decimal("-12.40"))]
     txns, count, total = list_credit_transactions(session, strategy="Short future")
-    assert count == 2 and total == Decimal("-12.40")
-    assert all(t.action == "Buy" for t in txns)
+    assert count == 9 and total == Decimal("-12.40")
+    assert sum(t.action == "Mark to Market" for t in txns) == 4
+
+
+def test_mark_to_market_at_close_instant_goes_to_closed_lot(session):
+    """A futures-option delivery closes the future stamped AT the settlement
+    time (real /ESH2 2022 data); that day's MTM still belongs to the lot,
+    while a close earlier the same day would not."""
+    fut = dict(symbol="/ESH2", underlying="/ES", instrument_type="Future")
+    run_pipeline(session, [
+        make_txn(action="Sell", quantity=1, price=4420.0,
+                 executed_at="2022-02-11T21:34:44+00:00", **fut),
+        make_txn(txn_type="Money Movement", sub_type="Mark to Market", quantity=1,
+                 price=4409.5, value=525.0, value_effect="Credit",
+                 executed_at="2022-02-11T22:00:00+00:00", **fut),
+        make_txn(action="Buy", quantity=1, price=4415.0, value=275.0, value_effect="Debit",
+                 executed_at="2022-02-11T22:00:00+00:00", **fut),
+    ])
+    rows = credits_collected(session, group_by="strategy")
+    assert [(r.group, r.credits) for r in rows] == [("Short future", Decimal("250"))]

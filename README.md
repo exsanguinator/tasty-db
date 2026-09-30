@@ -128,10 +128,11 @@ A simple cash-flow view: every sell (to open or to close) is a credit, every
 buy (to open or to close) is a debit, summed over a date range and broken
 down by underlying. Unlike `realized`, this isn't lot-matched — it's raw cash in
 vs. cash out from trading, including cash-settled index option expirations
-(e.g. SPX, XSP). Futures count only when contracts are closed, at the
-realized PnL (before fees) of the contracts closed; opening a future and the
-daily mark-to-market settlements add nothing, so an open futures position
-shows no credits until it closes.
+(e.g. SPX, XSP) and futures' daily mark-to-market settlements. (A futures
+trade itself only carries the cash since the previous day's settlement, so
+without the daily marks a futures position's credits would be meaningless;
+with them, a closed futures position's credits equal its realized PnL before
+fees.)
 
 ```sh
 tastydb credits --start 2026-01-01 --end 2026-06-30   # a date window
