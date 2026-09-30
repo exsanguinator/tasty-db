@@ -112,29 +112,17 @@ def _credit_signed_value():
     )
 
 
-def _is_mark_to_market():
-    return (
-        (func.lower(RawTransaction.transaction_type) == "money movement")
-        & (func.lower(RawTransaction.transaction_sub_type) == "mark to market")
-    )
-
-
 def _credit_filters(stmt, start, end, underlying, account):
-    """Restrict to credit-bearing rows (see `credits_collected`)."""
+    """Restrict to credit-bearing trade actions (see `credits_collected`)."""
     stmt = stmt.where(
+        func.lower(RawTransaction.transaction_type).in_(("trade", "receive deliver")),
         RawTransaction.processing_status.notin_(
             (ProcessingStatus.reversed, ProcessingStatus.error)
         ),
         (
-            func.lower(RawTransaction.transaction_type).in_(("trade", "receive deliver"))
-            & (
-                func.lower(RawTransaction.action).in_(_CREDIT_ACTIONS)
-                | func.lower(RawTransaction.transaction_sub_type).contains("cash settled")
-            )
-        )
-        # A futures trade's `value` only settles against the previous daily
-        # mark; the rest of the position's cash moves in these daily rows.
-        | _is_mark_to_market(),
+            func.lower(RawTransaction.action).in_(_CREDIT_ACTIONS)
+            | func.lower(RawTransaction.transaction_sub_type).contains("cash settled")
+        ),
     )
     if start is not None:
         stmt = stmt.where(RawTransaction.executed_at >= datetime.combine(start, time.min))
@@ -170,37 +158,21 @@ def _strategy_of_transaction(session: Session) -> dict[int, str]:
     return names
 
 
-def _mtm_strategy_resolver(session: Session):
-    """(account, symbol, settled_at) -> strategy of the futures lot held
-    through that daily mark-to-market. MTM rows belong to no lot, so they are
-    attributed to the earliest lot open at the mark. A lot closed earlier the
-    same day no longer marks, but one closed AT the settlement instant (a
-    futures-option delivery stamped at the close) still does."""
-    last_close = (
-        select(LotClose.lot_id, func.max(LotClose.close_date).label("closed_at"))
-        .group_by(LotClose.lot_id)
-        .subquery()
-    )
-    held: dict[tuple[str, str], list[tuple[datetime, datetime | None, str]]] = defaultdict(list)
-    for account, symbol, opened, remaining, closed, name in session.execute(
-        select(
-            Lot.account_id, Lot.symbol, Lot.open_date, Lot.remaining_quantity,
-            last_close.c.closed_at, Lot.strategy_name,
+def _futures_close_pnl(session: Session) -> dict[int, Decimal]:
+    """Closing broker transaction id -> gross (pre-fee) PnL of the futures
+    contracts it closed, summed over every lot it closed. Futures credit only
+    here: the broker `value` of a futures trade is just the cash since the
+    previous daily settlement, and an open contract has no result yet."""
+    gross = func.sum(LotClose.realized_pnl + LotClose.open_fees + LotClose.close_fees)
+    return {
+        txn_id: Decimal(str(pnl))
+        for txn_id, pnl in session.execute(
+            select(LotClose.broker_close_txn_id, gross)
+            .where(LotClose.asset_type == AssetType.future)
+            .where(LotClose.broker_close_txn_id.is_not(None))
+            .group_by(LotClose.broker_close_txn_id)
         )
-        .outerjoin(last_close, last_close.c.lot_id == Lot.lot_id)
-        .where(Lot.asset_type == AssetType.future)
-        .order_by(Lot.open_date, Lot.lot_id)
-    ):
-        until = None if remaining > 0 else closed
-        held[(account, symbol)].append((opened, until, name or CUSTOM))
-
-    def resolve(account: str, symbol: str, settled_at: datetime) -> str:
-        for opened, until, name in held.get((account, symbol), ()):
-            if opened <= settled_at and (until is None or until >= settled_at):
-                return name
-        return UNMATCHED
-
-    return resolve
+    }
 
 
 @dataclass
@@ -224,41 +196,42 @@ def _credit_txns(session, start, end, underlying, account) -> list[CreditTxnRow]
     stmt = _credit_filters(
         select(
             RawTransaction.id,
-            RawTransaction.account_number,
             RawTransaction.transaction_date,
             RawTransaction.executed_at,
             RawTransaction.symbol,
             RawTransaction.underlying_symbol,
+            RawTransaction.instrument_type,
             RawTransaction.action,
-            RawTransaction.transaction_sub_type,
             RawTransaction.quantity,
             _credit_signed_value(),
-            _is_mark_to_market(),
         ),
         start, end, underlying, account,
     )
     names = _strategy_of_transaction(session)
-    mtm_strategy = None
+    close_pnl = None
     rows = []
     for (
-        txn_id, account_number, txn_date, executed_at, symbol, underlying_symbol,
-        action, sub_type, quantity, value, is_mtm,
+        txn_id, txn_date, executed_at, symbol, underlying_symbol, instrument_type,
+        action, quantity, value,
     ) in session.execute(stmt):
-        if is_mtm:
-            mtm_strategy = mtm_strategy or _mtm_strategy_resolver(session)
-            strategy = mtm_strategy(account_number, symbol, executed_at)
+        if instrument_type == "Future":
+            if close_pnl is None:
+                close_pnl = _futures_close_pnl(session)
+            if txn_id not in close_pnl:
+                continue  # opens a contract (or is unprocessed): no result yet
+            credits = close_pnl[txn_id]
         else:
-            strategy = names.get(txn_id, UNMATCHED)
+            credits = Decimal(str(value or 0))
         rows.append(CreditTxnRow(
             txn_id=txn_id,
             date=txn_date,
             executed_at=executed_at,
             symbol=symbol,
             underlying_symbol=underlying_symbol,
-            action=action or sub_type,  # MTM rows have no action
+            action=action,
             quantity=Decimal(str(quantity)) if quantity is not None else None,
-            credits=Decimal(str(value or 0)),
-            strategy=strategy,
+            credits=credits,
+            strategy=names.get(txn_id, UNMATCHED),
         ))
     return rows
 
@@ -303,29 +276,23 @@ def credits_collected(
 ) -> list[CreditRow]:
     """Cash collected selling minus cash paid buying, from raw trade actions
     (Trade rows, assignment/exercise delivery legs, and cash-settled
-    exercise/assignment rows) plus futures daily mark-to-market settlements,
-    grouped by underlying or by strategy. Gross of fees.
+    exercise/assignment rows), grouped by underlying or by strategy. Gross of
+    fees.
 
-    Futures need the MTM rows: a futures trade's broker `value` is only the
-    cash since the previous daily settlement (opens are 0), so trades alone
-    miss most of the position's cash. With them, a flat futures position's
-    credits equal its gross realized PnL."""
+    Futures count only when a transaction closes contracts, at the gross
+    (pre-fee) PnL of the lots it closed; opening trades and the daily
+    mark-to-market rows add nothing, so an open futures position shows no
+    credits until it closes."""
     if group_by == "strategy":
         return _credits_by_strategy(session, start, end, underlying, account)
-    signed_value = _credit_signed_value()
-    stmt = _credit_filters(
-        select(
-            RawTransaction.underlying_symbol,
-            func.count(),
-            func.sum(signed_value),
-        ),
-        start, end, underlying, account,
-    ).group_by(RawTransaction.underlying_symbol).order_by(func.sum(signed_value).desc())
-
-    return [
-        CreditRow(group=group, trades=n, credits=Decimal(str(total)) if total is not None else Decimal("0"))
-        for group, n, total in session.execute(stmt)
-    ]
+    totals: dict[str | None, Decimal] = defaultdict(Decimal)
+    trades: dict[str | None, int] = defaultdict(int)
+    for txn in _credit_txns(session, start, end, underlying, account):
+        totals[txn.underlying_symbol] += txn.credits
+        trades[txn.underlying_symbol] += 1
+    rows = [CreditRow(group=g, trades=trades[g], credits=totals[g]) for g in totals]
+    rows.sort(key=lambda r: r.credits, reverse=True)
+    return rows
 
 
 def credits_timeseries(
@@ -336,17 +303,14 @@ def credits_timeseries(
     account: str | None = None,
 ) -> list[tuple[date, Decimal, Decimal]]:
     """(day, day credits, cumulative credits) points for the credits chart."""
-    day = func.date(RawTransaction.executed_at)
-    stmt = _credit_filters(
-        select(day, func.sum(_credit_signed_value())),
-        start, end, underlying, account,
-    ).group_by(day).order_by(day)
+    per_day: dict[date, Decimal] = defaultdict(Decimal)
+    for txn in _credit_txns(session, start, end, underlying, account):
+        per_day[txn.executed_at.date()] += txn.credits
     points: list[tuple[date, Decimal, Decimal]] = []
     running = Decimal("0")
-    for day_str, total in session.execute(stmt):
-        day_credits = Decimal(str(total or 0))
-        running += day_credits
-        points.append((date.fromisoformat(str(day_str)), day_credits, running))
+    for day in sorted(per_day):
+        running += per_day[day]
+        points.append((day, per_day[day], running))
     return points
 
 

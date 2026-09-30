@@ -48,7 +48,7 @@ CASH_SETTLED_OPTION_ROOTS = {
 # Fallback contract multipliers by futures product code ($ per point).
 FUTURES_MULTIPLIERS: dict[str, Decimal] = {
     "ES": Decimal("50"), "MES": Decimal("5"),
-    "NQ": Decimal("20"), "MNQ": Decimal("2"),
+    "NQ": Decimal("20"), "MNQ": Decimal("2"), "NNQ": Decimal("0.2"),
     "RTY": Decimal("50"), "M2K": Decimal("5"),
     "YM": Decimal("5"), "MYM": Decimal("0.5"),
     "CL": Decimal("1000"), "MCL": Decimal("100"),
