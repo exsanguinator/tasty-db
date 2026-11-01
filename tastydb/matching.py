@@ -36,7 +36,7 @@ import logging
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
 
 from .chains import assign_chains
@@ -71,11 +71,15 @@ class _LinkGroup:
 
 
 class Matcher:
-    def __init__(self, session: Session, meta: MetaProvider, method: str = "fifo"):
+    """Builds transient Lot/LotClose objects in memory (never added to a
+    session); `rebuild_lots` bulk-inserts `lots`/`closes` at the end."""
+
+    def __init__(self, meta: MetaProvider, method: str = "fifo"):
         if method not in ("fifo", "lifo"):
             raise ValueError(f"match method must be 'fifo' or 'lifo', got {method!r}")
-        self._session = session
         self._meta = meta
+        self.lots: list[Lot] = []
+        self.closes: list[LotClose] = []
         self._method = method
         # (account, symbol, side) -> open lots in open order
         self._book: dict[tuple[str, str, Side], list[Lot]] = {}
@@ -196,7 +200,7 @@ class Matcher:
             settlement_type=meta.settlement_type,
             open_order_id=event.order_id,
         )
-        self._session.add(lot)
+        self.lots.append(lot)
         self._book.setdefault((event.account, event.symbol, side), []).append(lot)
         if event.is_delivery:
             self._link_group(event).delivery_lots.append(lot)
@@ -268,7 +272,7 @@ class Matcher:
             open_order_id=lot.open_order_id,
             close_order_id=event.order_id,
         )
-        self._session.add(row)
+        self.closes.append(row)
         if event.is_removal:
             group = self._link_group(event)
             group.removal_closes.append(row)
@@ -361,7 +365,7 @@ def rebuild_lots(
     )
     events = classify_all(txns)
 
-    matcher = Matcher(session, meta, method=method)
+    matcher = Matcher(meta, method=method)
     for event in events:
         matcher.apply(event)
     matcher.finalize_links()
@@ -374,16 +378,30 @@ def rebuild_lots(
     as_of = min(today, max_seen.date()) if max_seen else today
     swept = matcher.expire_worthless(as_of, grace_days=grace_days)
 
-    # Naming + roll-chain passes. Strategy names first (per opening order);
-    # then link orders whose id closed old lots AND opened new ones
+    lots, closes = matcher.lots, matcher.closes
+    # Transient objects carry relationships, not FK columns; fill those in
+    # first — naming and chains key closes by close.lot_id.
+    for row in closes:
+        row.lot_id = row.lot.lot_id
+        row.linked_lot_id = row.linked_lot.lot_id if row.linked_lot is not None else None
+
+    # Naming + roll-chain passes, in memory. Strategy names first (per opening
+    # order); then link orders whose id closed old lots AND opened new ones
     # (chains.assign_chains). Runs after the sweep so settlement closes inherit
     # their lot's chain too.
-    session.flush()
-    all_lots = session.execute(select(Lot)).scalars().all()
-    all_closes = session.execute(select(LotClose)).scalars().all()
-    assign_strategy_names(all_lots, all_closes)
-    n_chains = assign_chains(all_lots, all_closes)
+    assign_strategy_names(lots, closes)
+    n_chains = assign_chains(lots, closes)
 
+    # One bulk INSERT per table instead of ORM unit-of-work flushes (several x
+    # faster). close_id stays autoincrement, assigned in creation order.
+    lot_cols = [c.key for c in Lot.__table__.columns]
+    close_cols = [c.key for c in LotClose.__table__.columns if c.key != "close_id"]
+    if lots:
+        session.execute(insert(Lot), [{k: getattr(o, k) for k in lot_cols} for o in lots])
+    if closes:
+        session.execute(
+            insert(LotClose), [{k: getattr(o, k) for k in close_cols} for o in closes]
+        )
     session.commit()
 
     open_count = session.execute(

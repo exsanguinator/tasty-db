@@ -24,6 +24,7 @@ import logging
 from datetime import date
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .client import ApiError, TastyClient
@@ -107,15 +108,39 @@ def option_fields(payload: dict) -> tuple[OptionType | None, date | None]:
 
 
 class MetaProvider:
-    """Resolves and caches InstrumentMeta rows. Pass client=None for offline use."""
+    """Resolves and caches InstrumentMeta rows. Pass client=None for offline use.
+
+    All rows are loaded in one query on first use and held in a strong dict
+    for the provider's lifetime. Per-symbol `session.get` would be far slower:
+    the identity map is weak, so un-referenced rows get dropped and re-queried,
+    and every query autoflushes all pending lots/closes first."""
 
     def __init__(self, session: Session, client: TastyClient | None = None):
         self._session = session
         self._client = client
+        self._cache: dict[str, InstrumentMeta] | None = None
+        self._resolved: set[str] = set()
 
     def get(self, symbol: str, instrument_type: str) -> InstrumentMeta:
+        with self._session.no_autoflush:
+            if self._cache is None:
+                self._cache = {
+                    m.symbol: m
+                    for m in self._session.execute(select(InstrumentMeta)).scalars()
+                }
+            if symbol in self._resolved:
+                return self._cache[symbol]
+            meta = self._resolve(symbol, instrument_type, self._cache.get(symbol))
+            self._cache[symbol] = meta
+            self._resolved.add(symbol)
+            return meta
+
+    def _resolve(
+        self, symbol: str, instrument_type: str, meta: InstrumentMeta | None
+    ) -> InstrumentMeta:
+        """Self-heal a cached row (once per symbol per provider), or build a
+        new one from the API / fallback tables."""
         asset_type = INSTRUMENT_TYPE_TO_ASSET.get(instrument_type, AssetType.stock)
-        meta = self._session.get(InstrumentMeta, symbol)
         if meta is not None:
             if meta.source == "fallback":
                 # Fallback rows are cheap to derive, so re-derive on access:
@@ -162,8 +187,8 @@ class MetaProvider:
                 log.warning("instrument fetch failed for %s (%s); using fallback", symbol, exc)
         if meta is None:
             meta = self._fallback(symbol, asset_type)
+        # natural PK (symbol): no flush needed, it lands with the commit
         self._session.add(meta)
-        self._session.flush()
         return meta
 
     # -- API-sourced -------------------------------------------------------
