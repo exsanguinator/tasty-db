@@ -38,11 +38,17 @@ Supporting modules: `auth.py` (OAuth2 refresh-token → 15-min access tokens),
 `symbology.py` (OCC/futures symbol parsers), `structures.py` (pure leg-shape →
 strategy-name rules), `analytics.py` (PnL aggregation, positions, strategies),
 `chains.py` (roll-chain grouping + campaign analytics), `marks.py` (mark cache
-for unrealized PnL), `cashflows.py`
+for unrealized PnL), `ops.py` (the `accounts`/`sync`/`process`/`status` work
+as data-returning functions — `cli.py` prints them, the dashboard's Database
+page renders them; put new maintenance logic there, not in a click command),
+`cashflows.py`
 (Money Movement → external-flow vs performance classification, computed on
 demand from raw), `returns.py` (account TWR/XIRR from `balance_snapshots` +
 external flows), `cli.py` (click), `web/` (FastAPI + Jinja dashboard, served
-by `tastydb dashboard`; read-only except POST /marks/refresh).
+by `tastydb dashboard`; report pages are read-only — writes are POST
+/marks/refresh and the Database page's POST /database/{sync,process,
+accounts/refresh}; sync/process run in a single background thread
+(`web.app.JobRunner`, one job at a time so rebuilds never overlap)).
 `forward.py` (repo root, not part of the package, stdlib only) is a TCP relay
 that exposes the loopback-bound dashboard on the LAN (0.0.0.0:8787 →
 127.0.0.1:8787); keep its ports in sync with the `dashboard` CLI defaults.

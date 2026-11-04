@@ -199,7 +199,8 @@ where.
 
 ## The web dashboard
 
-`tastydb dashboard` serves a read-only local web UI over the same database:
+`tastydb dashboard` serves a local web UI over the same database. Everything
+the CLI does can also be done there:
 
 | Page | What it shows |
 |---|---|
@@ -211,11 +212,13 @@ where.
 | **Strategies** | Multi-leg orders reported as single trades, each named by its leg shape (Iron condor, Short strangle, Superbull, ...) |
 | **Chains** | Roll campaigns: every roll of a position as one story with total PnL, each step named by the structure it opened |
 | **Strategy** | One strategy name drilled down: its trades, its underlyings, and the individual credit-bearing transactions. Reached by clicking a row in the Realized or Credits *By strategy* table, or a name on the Strategies page |
+| **Database** | Upkeep without the CLI: a *Sync & process* button (`tastydb sync` then `tastydb process`, with advanced options for account / backfill / since / FIFO-LIFO), *Process only* (no API needed), the account list with per-account transaction span, last sync and last balance snapshot (`tastydb accounts`), and processing status with the rows that need attention (`tastydb status`). Jobs run in the background; the page follows progress and refreshes when done |
 
-Every view filters by account and date range. The only network call the
-dashboard ever makes is the optional *Refresh marks* button (live quotes for
-unrealized PnL) — everything else is served from your local database, with
-charting vendored (no CDN).
+Every report view filters by account and date range. The dashboard only
+calls the TastyTrade API when you press a button: *Refresh marks* (live quotes
+for unrealized PnL) or, on the Database page, *Sync & process* / *Refresh from
+API*. Everything else is served from your local database, with charting
+vendored (no CDN).
 
 A note on dates: charts and date filters (here and in `tastydb pnl` /
 `tastydb credits --start/--end`) use the UTC calendar date of each trade.
@@ -253,8 +256,9 @@ Then browse to `http://<this-machine's-LAN-IP>:8787/`.
 - You can skip the relay with `tastydb dashboard --host 0.0.0.0`, which
   serves the dashboard on every interface directly.
 - The dashboard has no authentication, and anyone who can reach it can press
-  *Refresh marks*, which calls the TastyTrade API with your credentials. Only
-  expose it on a network you trust.
+  *Refresh marks* or *Sync & process*, which call the TastyTrade API with your
+  credentials and rewrite the database's derived tables. Only expose it on a
+  network you trust.
 
 ## How it works (in one paragraph)
 

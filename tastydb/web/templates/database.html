@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Database · tasty-db{% endblock %}
+{% block filters %}{% endblock %}
+{% block content %}
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Raw transactions</div>
+    <div class="value">{{ status.raw_total }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Open lots</div>
+    <div class="value">{{ status.open_lots }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Lot closes</div>
+    <div class="value">{{ status.closes }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Needs attention</div>
+    <div class="value {{ 'neg' if status.problem_count }}">{{ status.problem_count }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Last sync</div>
+    <div class="value" style="font-size:16px">
+      {{ status.last_sync_at.strftime('%Y-%m-%d %H:%M UTC') if status.last_sync_at else 'never' }}
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Sync &amp; process
+    <span class="sub">{{ env }} · {{ db_url }}</span>
+  </h2>
+  <p class="dim" style="margin-top:0">
+    Pulls new transactions and balance snapshots from TastyTrade (<code>tastydb sync</code>),
+    then rebuilds lots and closes (<code>tastydb process</code>). Process only needs no API access.
+  </p>
+  <form method="post" action="/database/sync" class="db-actions">
+    <button type="submit" class="primary"
+      {% if not can_sync %}disabled title="no API credentials — set TT_CLIENT_SECRET / TT_REFRESH_TOKEN"
+      {% elif running %}disabled title="a job is running"{% endif %}>Sync &amp; process</button>
+    <button type="submit" formaction="/database/process"
+      {{ 'disabled title=a job is running' if running }}>Process only</button>
+    <details>
+      <summary>Advanced</summary>
+      <div class="db-options">
+        <label>Account
+          <select name="account">
+            <option value="">All accounts</option>
+            {% for n in account_numbers %}
+              <option value="{{ n }}">{{ account_names.get(n, n) }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label><input type="checkbox" name="backfill" value="true"> Backfill full history</label>
+        <label>Since <input type="date" name="since"></label>
+        <label>Matching
+          <select name="method">
+            {% for m in ('fifo', 'lifo') %}
+              <option value="{{ m }}" {{ 'selected' if m == match_method }}>{{ m | upper }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label><input type="checkbox" name="offline_meta" value="true"> Offline instrument metadata</label>
+      </div>
+      <div class="dim" style="font-size:12px">
+        Account / backfill / since apply to sync; matching and offline metadata apply to process.
+      </div>
+    </details>
+  </form>
+
+  {% if job %}
+  <div class="job job-{{ job.status }}" id="job">
+    <div>
+      <strong>{{ job.kind | capitalize }}</strong> —
+      <span id="job-status">{{ job.status }}</span>{% if running %} · <span id="job-stage">{{ job.stage }}</span>{% endif %}
+      <span class="dim">· started {{ job.started_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+      {%- if job.finished_at %}, finished {{ job.finished_at.strftime('%H:%M:%S UTC') }}{% endif %}</span>
+    </div>
+    <pre id="job-log">{% for line in job.log %}{{ line }}
+{% endfor %}{% if job.error %}error: {{ job.error }}{% endif %}</pre>
+  </div>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Accounts
+    <form method="post" action="/database/accounts/refresh" class="toggle">
+      <button type="submit" {{ 'disabled title=no API credentials' if not can_sync }}>Refresh from API</button>
+    </form>
+  </h2>
+  {% if account_numbers %}
+  <table>
+    <thead>
+      <tr>
+        <th>Account</th><th>Nickname</th><th>Type</th><th>Margin/cash</th>
+        <th class="num">Transactions</th><th>First txn</th><th>Last txn</th>
+        <th>Last sync</th><th>Last snapshot</th><th>Cached</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% set by_number = {} %}
+      {% for a in account_rows %}{% set _ = by_number.update({a.account_number: a}) %}{% endfor %}
+      {% for n in account_numbers %}
+      {% set a = by_number.get(n) %}
+      {% set act = status.activity.get(n) %}
+      <tr>
+        <td><a href="/?account={{ n }}">{{ n }}</a></td>
+        <td>{{ a.nickname if a and a.nickname else '' }}</td>
+        <td>{{ a.account_type_name if a and a.account_type_name else '' }}</td>
+        <td>{{ a.margin_or_cash if a and a.margin_or_cash else '' }}</td>
+        <td class="num">{{ act.transactions if act else 0 }}</td>
+        <td>{{ act.first_txn.strftime('%Y-%m-%d') if act and act.first_txn else '—' }}</td>
+        <td>{{ act.last_txn.strftime('%Y-%m-%d') if act and act.last_txn else '—' }}</td>
+        <td>
+          {% if act and act.last_sync %}
+            {% set run = act.last_sync %}
+            {{ run.started_at.strftime('%Y-%m-%d %H:%M') }}
+            <span class="tag">{{ run.mode }}</span>
+            <span class="dim">{{ run.fetched }} fetched / {{ run.inserted }} new / {{ run.updated }} upd</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ act.last_snapshot if act and act.last_snapshot else '—' }}</td>
+        <td class="dim">{{ a.synced_at.strftime('%Y-%m-%d %H:%M') if a and a.synced_at else '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No accounts yet — run a sync.</div>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Processing status <span class="sub">raw transactions by classification outcome</span></h2>
+  {% if status.status_counts %}
+  <table>
+    <thead><tr><th>Status</th><th class="num">Transactions</th></tr></thead>
+    <tbody>
+      {% for s, n in status.status_counts | sort(attribute='0.value') %}
+      <tr><td>{{ s.value }}</td><td class="num">{{ n }}</td></tr>
+      {% endfor %}
+    </tbody>
+    <tfoot><tr><td>Total</td><td class="num">{{ status.raw_total }}</td></tr></tfoot>
+  </table>
+  {% else %}
+  <div class="empty">No raw transactions — run a sync.</div>
+  {% endif %}
+</div>
+
+{% if status.problems %}
+<div class="panel">
+  <h2>Needs attention
+    <span class="sub">unsupported / error rows{% if status.problem_count > status.problems | length %} — first {{ status.problems | length }} of {{ status.problem_count }}{% endif %}</span>
+  </h2>
+  <table>
+    <thead><tr><th>Txn</th><th>Date</th><th>Account</th><th>Symbol</th><th>Type / sub-type</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      {% for t in status.problems %}
+      <tr>
+        <td>{{ t.id }}</td>
+        <td>{{ t.executed_at.strftime('%Y-%m-%d') }}</td>
+        <td>{{ account_names.get(t.account_number, t.account_number) }}</td>
+        <td>{{ t.symbol or '—' }}</td>
+        <td>{{ t.transaction_type }} / {{ t.transaction_sub_type }}</td>
+        <td><span class="tag">{{ t.processing_status.value }}</span></td>
+        <td style="white-space:normal">{{ t.processing_note or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if status.unclassified %}
+<div class="panel">
+  <h2>Unclassified money movement
+    <span class="sub">{{ status.unclassified | length }} rows treated as external flows — add a rule in cashflows.py</span>
+  </h2>
+  <table>
+    <thead><tr><th>Txn</th><th>Date</th><th>Account</th><th>Sub-type</th><th class="num">Amount</th><th>Description</th></tr></thead>
+    <tbody>
+      {% for f in status.unclassified %}
+      <tr>
+        <td>{{ f.txn_id }}</td>
+        <td>{{ f.date }}</td>
+        <td>{{ account_names.get(f.account_number, f.account_number) }}</td>
+        <td>{{ f.sub_type or '' }}</td>
+        <td class="num {{ f.amount | pnl_class }}">{{ f.amount | signed_money }}</td>
+        <td style="white-space:normal">{{ f.description }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+{% if running %}
+<script>
+(function poll() {
+  setTimeout(async () => {
+    try {
+      const job = await (await fetch('/database/job')).json();
+      if (job.status !== 'running') { location.replace('/database'); return; }
+      document.getElementById('job-stage').textContent = job.stage;
+      document.getElementById('job-log').textContent = job.log.join('\n');
+    } catch (e) { /* server busy or restarting; keep polling */ }
+    poll();
+  }, 2000);
+})();
+</script>
+{% endif %}
+{% endblock %}

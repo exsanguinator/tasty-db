@@ -234,3 +234,165 @@ def test_dashboard_filters_narrow_results(tmp_path):
     marks_refresh = client.post("/marks/refresh", data={"back": "/positions"}, follow_redirects=True)
     assert marks_refresh.status_code == 200
     assert "no API credentials" in marks_refresh.text
+
+
+# ---------------------------------------------------------------- Database page
+
+
+class _FakeSyncClient:
+    """Stands in for TastyClient: serves canned payloads, no network."""
+
+    def __init__(self, payloads, snapshots_fail=False):
+        self.payloads = payloads
+        self.snapshots_fail = snapshots_fail
+
+    def accounts(self):
+        return [{"account-number": "5WT00001", "nickname": "Test IRA",
+                 "account-type-name": "Roth IRA", "margin-or-cash": "Cash"}]
+
+    def iter_transactions(self, account_number, start_date=None):
+        return iter(self.payloads)
+
+    def iter_balance_snapshots(self, account_number, start_date=None):
+        from tastydb.client import ApiError
+        if self.snapshots_fail:
+            raise ApiError(503, "snapshots unavailable")
+        return iter([])
+
+    def net_liq_history(self, account_number, time_back="all"):
+        return []
+
+
+def _database_app(tmp_path, monkeypatch=None, fake=None):
+    """A dashboard over an empty DB; with `fake`, credentials are set and the
+    web module's TastyClient is replaced by it."""
+    from fastapi.testclient import TestClient
+
+    from tastydb.config import Config
+    from tastydb.web import app as web_app
+
+    config = Config(db_url=f"sqlite:///{tmp_path}/db-page.sqlite3")
+    config.client_secret = config.refresh_token = None
+    if fake is not None:
+        config.client_secret, config.refresh_token = "secret", "token"
+        monkeypatch.setattr(web_app, "TastyClient", lambda _config: fake)
+    app = web_app.create_app(config)
+    return TestClient(app), app.state.jobs, config
+
+
+def test_database_page_shows_accounts_and_status(tmp_path):
+    client = _dashboard_client(_vertical_payloads(), tmp_path)
+    page = client.get("/database")
+    assert page.status_code == 200
+    assert 'href="/database"' in page.text  # nav link
+    assert "Test IRA" in page.text and "5WT00001" in page.text
+    assert "Processing status" in page.text
+    assert "processed" in page.text
+    # sync needs credentials; process-only does not
+    assert 'disabled title="no API credentials' in page.text
+    assert "Process only" in page.text
+    assert 'name="start"' not in page.text  # report filter bar hidden here
+
+
+def test_database_sync_without_credentials_does_not_start(tmp_path):
+    client, jobs, _ = _database_app(tmp_path)
+    resp = client.post("/database/sync", follow_redirects=True)
+    assert resp.status_code == 200
+    assert "no API credentials" in resp.text
+    assert jobs.job is None
+    assert client.get("/database/job").json() == {"status": "idle"}
+    refresh = client.post("/database/accounts/refresh", follow_redirects=True)
+    assert "no API credentials" in refresh.text
+
+
+def test_database_process_only_rebuilds_offline(tmp_path):
+    from tastydb.db import make_engine
+    from tastydb.ingest import ingest_payloads
+
+    client, jobs, config = _database_app(tmp_path)
+    engine = make_engine(config.db_url)
+    with Session(engine) as s:
+        ingest_payloads(s, _vertical_payloads())
+        s.commit()
+        assert s.execute(select(Lot)).first() is None
+
+    resp = client.post("/database/process", data={"method": "lifo"}, follow_redirects=True)
+    assert resp.status_code == 200
+    jobs.wait(10)
+    assert jobs.job.status == "done", jobs.job.error
+    assert any("4 transactions" in line for line in jobs.job.log)
+    with Session(engine) as s:
+        assert len(s.execute(select(Lot)).scalars().all()) == 2
+    page = client.get("/database")
+    assert "Process</strong>" in page.text and "done" in page.text
+    assert "setTimeout" not in page.text  # no polling once finished
+
+
+def test_database_sync_and_process_with_fake_client(tmp_path, monkeypatch):
+    fake = _FakeSyncClient(_vertical_payloads(), snapshots_fail=True)
+    client, jobs, config = _database_app(tmp_path, monkeypatch, fake)
+
+    resp = client.post("/database/sync", data={"backfill": "true"}, follow_redirects=True)
+    assert "sync &amp; process started" in resp.text or "sync & process started" in resp.text
+    jobs.wait(10)
+    job = jobs.job
+    assert job.status == "done", job.error
+    assert job.log[0].startswith("5WT00001: backfill from beginning — fetched 4, inserted 4")
+    assert "balance snapshots failed: HTTP 503" in job.log[1]
+    assert job.log[-1].startswith("4 transactions ->")
+
+    page = client.get("/database")
+    assert "Roth IRA" in page.text  # accounts upserted from the API
+    assert "backfill" in page.text  # last sync run listed
+    assert client.get("/database/job").json()["status"] == "done"
+
+    refresh = client.post("/database/accounts/refresh", follow_redirects=True)
+    assert "refreshed 1 accounts" in refresh.text
+
+
+def test_database_rejects_second_job_while_running(tmp_path, monkeypatch):
+    import threading
+
+    client, jobs, _ = _database_app(tmp_path)
+    release = threading.Event()
+    assert jobs.start("blocker", lambda job: release.wait(10))
+    try:
+        resp = client.post("/database/process", follow_redirects=True)
+        assert "already running" in resp.text
+        page = client.get("/database")
+        assert "setTimeout" in page.text  # page polls while a job runs
+        assert client.get("/database/job").json()["status"] == "running"
+    finally:
+        release.set()
+        jobs.wait(10)
+    assert jobs.job.status == "done"
+
+
+def test_database_job_failure_is_reported(tmp_path):
+    client, jobs, _ = _database_app(tmp_path)
+
+    def boom(job):
+        raise ValueError("kaput")
+
+    jobs.start("process", boom)
+    jobs.wait(10)
+    assert jobs.job.status == "failed"
+    assert "kaput" in client.get("/database").text
+
+
+def test_ops_db_status_activity(tmp_path):
+    from tastydb.ingest import ingest_payloads
+    from tastydb.ops import db_status
+
+    engine = create_engine(f"sqlite:///{tmp_path}/ops.sqlite3")
+    init_db(engine)
+    with Session(engine) as s:
+        ingest_payloads(s, _vertical_payloads())
+        s.commit()
+        st = db_status(s, with_activity=True)
+    assert st.raw_total == 4
+    assert st.problem_count == 0
+    act = st.activity["5WT00001"]
+    assert act.transactions == 4
+    assert act.first_txn == datetime(2026, 4, 8, 14, 0)
+    assert act.last_sync is None and st.last_sync_at is None

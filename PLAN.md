@@ -82,6 +82,10 @@ were still free:
       group-by-underlying, open positions, strategies, bookmarkable
       `/lot/{lot_id}` and `/underlying/{symbol}` pages; account + date-range
       filters on every view. (2026-07-04)
+- [x] Dashboard **Database** page (issue #2): accounts, status, and
+      background *Sync & process* / *Process only* jobs, so every CLI
+      command is available from the web. Shared logic lives in `ops.py`.
+      (2026-11-05)
 - [x] Unrealized PnL: `marks` cache table refreshed from
       `/market-data/by-type` (batched ≤100 symbols, camelCase responses);
       gross unrealized on the positions view. (2026-07-04)

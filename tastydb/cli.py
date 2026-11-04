@@ -8,6 +8,7 @@
     tastydb credits --start D --end D      credits collected report
     tastydb pnl --start D --end D          account PnL / returns (TWR, XIRR) from net-liq
     tastydb status                         ingest/processing overview
+    tastydb dashboard                      local web UI (all of the above)
 """
 
 from __future__ import annotations
@@ -18,18 +19,22 @@ from datetime import date
 from decimal import Decimal
 
 import click
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from .analytics import credits_collected, realized_pnl
 from .auth import AuthError
-from .cashflows import unclassified_flows
-from .client import ApiError, TastyClient
+from .client import TastyClient
 from .config import Config, load_dotenv
 from .db import init_db, make_engine, make_session_factory
-from .ingest import sync_account, sync_balance_snapshots, upsert_accounts
-from .instruments import MetaProvider
-from .matching import rebuild_lots
-from .models import Account, BalanceSnapshot, Lot, LotClose, ProcessingStatus, RawTransaction
+from .models import Account, BalanceSnapshot
+from .ops import (
+    ATTENTION_LIMIT,
+    db_status,
+    list_accounts,
+    process_summary,
+    run_process,
+    run_sync,
+)
 from .returns import period_returns
 
 log = logging.getLogger(__name__)
@@ -99,25 +104,16 @@ def init_db_cmd(app: App):
 def accounts(app: App):
     """List accounts visible to your OAuth grant (cached copy when offline)."""
     init_db(app.engine)
-    client = app.optional_client()
     with app.session_factory() as session:
-        if client is not None:
-            rows = client.accounts()
-            upsert_accounts(session, rows)
-            session.commit()
-            listing = [(a["account-number"], a.get("nickname") or "") for a in rows]
-        else:
-            cached = session.execute(
-                select(Account).order_by(Account.account_number)
-            ).scalars().all()
-            if not cached:
-                raise click.ClickException(
-                    "no credentials and no cached accounts — run `tastydb sync` once"
-                )
-            click.echo("(offline: cached account list)", err=True)
-            listing = [(a.account_number, a.nickname or "") for a in cached]
-    for number, nickname in listing:
-        click.echo(f"{number:<12} {nickname}".rstrip())
+        listing, offline = list_accounts(session, app.optional_client())
+    if offline:
+        if not listing:
+            raise click.ClickException(
+                "no credentials and no cached accounts — run `tastydb sync` once"
+            )
+        click.echo("(offline: cached account list)", err=True)
+    for row in listing:
+        click.echo(f"{row.account_number:<12} {row.nickname}".rstrip())
 
 
 @main.command()
@@ -129,28 +125,15 @@ def accounts(app: App):
 def sync(app: App, account_number: str | None, backfill: bool, since):
     """Pull transaction history into raw storage (idempotent, safe to re-run)."""
     init_db(app.engine)
-    client = app.client()
-    account_rows = client.accounts()
-    numbers = [account_number] if account_number else [
-        a["account-number"] for a in account_rows
-    ]
     since_date: date | None = since.date() if since else None
+
+    def report(result):
+        click.echo(result.transactions_line)
+        click.echo(result.snapshots_line, err=result.snapshot_error is not None)
+
     with app.session_factory() as session:
-        upsert_accounts(session, account_rows)
-        for number in numbers:
-            run = sync_account(session, client, number, backfill=backfill, since=since_date)
-            click.echo(
-                f"{number}: {run.mode} from {run.start_date_used or 'beginning'} — "
-                f"fetched {run.fetched}, inserted {run.inserted}, updated {run.updated}"
-            )
-            try:
-                upserted, lo, hi = sync_balance_snapshots(
-                    session, client, number, backfill=backfill
-                )
-                span = f"{lo} → {hi}" if lo else "none stored"
-                click.echo(f"{number}: {upserted} balance snapshots upserted ({span})")
-            except ApiError as exc:
-                click.echo(f"{number}: balance snapshots failed: {exc}", err=True)
+        run_sync(session, app.client(), account=account_number,
+                 backfill=backfill, since=since_date, on_result=report)
     click.echo("run `tastydb process` to rebuild lots")
 
 
@@ -167,19 +150,13 @@ def process(app: App, method: str | None, offline: bool):
     if client is None and not offline:
         click.echo("note: no API credentials; instrument metadata will use fallbacks", err=True)
     with app.session_factory() as session:
-        meta = MetaProvider(session, client)
-        stats = rebuild_lots(
+        stats = run_process(
             session,
-            meta,
+            client,
             method=method or app.config.match_method,
             grace_days=app.config.expiration_grace_days,
         )
-    click.echo(
-        f"{stats['transactions']} transactions -> {stats['events']} events, "
-        f"{stats['closes']} closes, {stats['open_lots']} open lots "
-        f"({stats['expired_worthless']} swept as worthless expiration), "
-        f"{stats['chains']} roll chains"
-    )
+    click.echo(process_summary(stats))
 
 
 @main.command()
@@ -310,7 +287,7 @@ def pnl(app: App, start, end, account: str | None):
 @click.option("--no-browser", is_flag=True, help="Don't open the browser automatically")
 @click.pass_obj
 def dashboard(app: App, host: str, port: int, no_browser: bool):
-    """Serve the local web dashboard (read-only; marks refresh is the only write)."""
+    """Serve the local web dashboard (reports, plus sync/process and marks refresh)."""
     import threading
     import webbrowser
 
@@ -331,40 +308,24 @@ def status(app: App):
     """Counts of raw transactions by processing status, plus lot totals."""
     init_db(app.engine)
     with app.session_factory() as session:
-        rows = session.execute(
-            select(RawTransaction.processing_status, func.count())
-            .group_by(RawTransaction.processing_status)
-        ).all()
-        open_lots = session.execute(
-            select(func.count()).select_from(Lot).where(Lot.remaining_quantity > 0)
-        ).scalar_one()
-        closes = session.execute(select(func.count()).select_from(LotClose)).scalar_one()
-
+        st = db_status(session)
         click.echo("raw transactions:")
-        for status_value, count in rows:
+        for status_value, count in st.status_counts:
             click.echo(f"  {status_value.value:<12} {count}")
-        if not rows:
+        if not st.status_counts:
             click.echo("  (none — run `tastydb sync`)")
-        click.echo(f"open lots: {open_lots}")
-        click.echo(f"lot closes: {closes}")
+        click.echo(f"open lots: {st.open_lots}")
+        click.echo(f"lot closes: {st.closes}")
 
-        problems = session.execute(
-            select(RawTransaction)
-            .where(RawTransaction.processing_status.in_(
-                [ProcessingStatus.unsupported, ProcessingStatus.error]
-            ))
-            .order_by(RawTransaction.executed_at)
-            .limit(20)
-        ).scalars().all()
-        if problems:
-            click.echo("\nneeds attention (first 20):")
-            for txn in problems:
+        if st.problems:
+            click.echo(f"\nneeds attention (first {ATTENTION_LIMIT}):")
+            for txn in st.problems:
                 click.echo(
                     f"  {txn.id} {txn.executed_at:%Y-%m-%d} {txn.symbol or '-'} "
                     f"[{txn.transaction_type}/{txn.transaction_sub_type}] {txn.processing_note}"
                 )
 
-        flows = unclassified_flows(session)
+        flows = st.unclassified
         if flows:
             click.echo(
                 f"\nunclassified money movement ({len(flows)} rows, treated as "

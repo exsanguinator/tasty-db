@@ -114,3 +114,31 @@ tfoot td { font-weight: 650; border-top: 1px solid var(--baseline); border-botto
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
 .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+
+/* Database page */
+.db-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.db-actions button, .panel h2 form button {
+  font: inherit; color: var(--ink); cursor: pointer;
+  background: var(--surface); border: 1px solid var(--baseline);
+  border-radius: 6px; padding: 5px 12px;
+}
+.panel h2 form button { font-size: 13px; font-weight: 400; padding: 3px 10px; }
+.db-actions button.primary { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+.db-actions button:disabled, .panel h2 form button:disabled { opacity: 0.5; cursor: not-allowed; }
+.db-actions details { flex-basis: 100%; margin-top: 6px; }
+.db-actions summary { cursor: pointer; color: var(--ink-2); }
+.db-options { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 8px 0 4px; }
+.db-options select, .db-options input[type=date] {
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--baseline); border-radius: 6px; padding: 3px 6px; margin-left: 4px;
+}
+.job {
+  margin-top: 14px; padding: 10px 12px; border-radius: 6px;
+  border: 1px solid var(--border); border-left: 3px solid var(--series-1);
+}
+.job-done { border-left-color: var(--pos); }
+.job-failed { border-left-color: var(--neg); }
+.job pre {
+  margin: 8px 0 0; font-size: 12px; white-space: pre-wrap; color: var(--ink-2);
+  max-height: 260px; overflow-y: auto;
+}
