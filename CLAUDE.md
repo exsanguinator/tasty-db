@@ -49,9 +49,9 @@ by `tastydb dashboard`; report pages are read-only — writes are POST
 /marks/refresh and the Database page's POST /database/{sync,process,
 accounts/refresh}; sync/process run in a single background thread
 (`web.app.JobRunner`, one job at a time so rebuilds never overlap)).
-`forward.py` (repo root, not part of the package, stdlib only) is a TCP relay
-that exposes the loopback-bound dashboard on the LAN (0.0.0.0:8787 →
-127.0.0.1:8787); keep its ports in sync with the `dashboard` CLI defaults.
+The dashboard binds 127.0.0.1:8787 by default; a bare `tastydb dashboard
+--host` binds 0.0.0.0 (LAN access, replaces the removed `forward.py` relay),
+`--host <addr>` binds that address.
 
 Account returns: `tastydb sync` also upserts EOD `balance_snapshots`
 (per-account PK (account, date, time_of_day); older-than-history gaps
