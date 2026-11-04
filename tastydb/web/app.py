@@ -1,19 +1,25 @@
-"""Read-only web dashboard over the tastydb database.
+"""Web dashboard over the tastydb database.
 
-The only write path is POST /marks/refresh, which caches fresh market marks
-for unrealized PnL. Sync/process stay in the CLI.
+Report pages are read-only. The write paths are POST /marks/refresh (caches
+fresh market marks for unrealized PnL) and the Database page's
+POST /database/{sync,process,accounts/refresh}, which run the same `ops`
+functions as `tastydb sync` / `process` / `accounts`. Sync and process run in
+one background thread at a time (`JobRunner`) so a long backfill never holds
+an HTTP request open and two rebuilds can never overlap.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+import threading
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
@@ -36,6 +42,7 @@ from ..config import Config
 from ..db import init_db, make_engine, make_session_factory
 from ..marks import refresh_marks
 from ..models import Account, Lot, LotClose
+from ..ops import db_status, list_accounts, process_summary, run_process, run_sync
 from ..returns import nlv_series, period_returns, twr_index
 from .. import __version__
 
@@ -86,12 +93,87 @@ def _parse_date(raw: str | None) -> date | None:
         return None
 
 
+NO_CREDENTIALS = "no API credentials — set TT_CLIENT_SECRET / TT_REFRESH_TOKEN"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+@dataclass
+class Job:
+    kind: str  # "sync & process" | "process"
+    status: str = "running"  # running | done | failed
+    stage: str = "starting"
+    started_at: datetime = field(default_factory=_utcnow)
+    finished_at: datetime | None = None
+    log: list[str] = field(default_factory=list)
+    error: str | None = None
+
+    def as_dict(self) -> dict:
+        return {
+            "kind": self.kind,
+            "status": self.status,
+            "stage": self.stage,
+            "started_at": self.started_at.isoformat(),
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "log": list(self.log),
+            "error": self.error,
+        }
+
+
+class JobRunner:
+    """Runs at most one maintenance job at a time in a background thread and
+    keeps the last job's state for the Database page."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self.job: Job | None = None
+
+    @property
+    def running(self) -> bool:
+        return self.job is not None and self.job.status == "running"
+
+    def start(self, kind: str, work) -> bool:
+        """Start `work(job)` in the background; False if a job is running."""
+        with self._lock:
+            if self.running:
+                return False
+            job = self.job = Job(kind)
+            self._thread = threading.Thread(
+                target=self._run, args=(job, work), name="tastydb-job", daemon=True
+            )
+            self._thread.start()
+            return True
+
+    @staticmethod
+    def _run(job: Job, work) -> None:
+        try:
+            work(job)
+            job.status = "done"
+            job.stage = "finished"
+        except AuthError:
+            job.status, job.error = "failed", NO_CREDENTIALS
+        except Exception as exc:  # noqa: BLE001 - surface on the page, never kill the server
+            log.exception("%s job failed", job.kind)
+            job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
+        finally:
+            job.finished_at = _utcnow()
+
+    def wait(self, timeout: float | None = None) -> None:
+        """Block until the current job finishes (tests)."""
+        if self._thread is not None:
+            self._thread.join(timeout)
+
+
 def create_app(config: Config) -> FastAPI:
     engine = make_engine(config.resolved_db_url)
     init_db(engine)
     session_factory = make_session_factory(engine)
 
     app = FastAPI(title="tasty-db dashboard", version=__version__)
+    jobs = app.state.jobs = JobRunner()
     app.mount("/static", StaticFiles(directory=_HERE / "static"), name="static")
     templates = Jinja2Templates(directory=_HERE / "templates")
     templates.env.filters["money"] = _money
@@ -234,7 +316,7 @@ def create_app(config: Config) -> FastAPI:
                 updated = refresh_marks(session, client)
             msg = f"refreshed marks for {updated} symbols"
         except AuthError:
-            msg = "no API credentials — set TT_CLIENT_SECRET / TT_REFRESH_TOKEN"
+            msg = NO_CREDENTIALS
         except Exception as exc:  # noqa: BLE001 - surface, don't 500
             log.exception("marks refresh failed")
             msg = f"marks refresh failed: {exc}"
@@ -334,5 +416,105 @@ def create_app(config: Config) -> FastAPI:
             chart_labels=[p[0].isoformat() for p in points],
             chart_values=[float(p[2]) for p in points],
         )
+
+    # ------------------------------------------------------------ database
+
+    def back_to_database(msg: str) -> RedirectResponse:
+        return RedirectResponse(f"/database?{urlencode({'msg': msg})}", status_code=303)
+
+    def process_step(job: Job, session, method: str, offline_meta: bool) -> None:
+        job.stage = "processing"
+        client = None
+        if not offline_meta and config.has_credentials:
+            try:
+                client = TastyClient(config)
+            except AuthError:
+                client = None
+        if client is None:
+            job.log.append("instrument metadata: cache + symbology fallbacks (no API)")
+        stats = run_process(session, client, method=method,
+                            grace_days=config.expiration_grace_days)
+        job.log.append(process_summary(stats))
+
+    def clean_method(raw: str | None) -> str:
+        return raw if raw in ("fifo", "lifo") else config.match_method
+
+    @app.get("/database")
+    def database_view(request: Request):
+        with session_factory() as session:
+            status = db_status(session, with_activity=True)
+            cached = session.execute(
+                select(Account).order_by(Account.account_number)
+            ).scalars().all()
+            numbers = [a.account_number for a in cached]
+            numbers += sorted(set(status.activity) - set(numbers))
+        return render(
+            request, "database.html",
+            status=status, account_rows=cached, account_numbers=numbers,
+            db_url=config.resolved_db_url, env=config.env,
+            match_method=config.match_method,
+            can_sync=config.has_credentials, job=jobs.job, running=jobs.running,
+        )
+
+    @app.get("/database/job")
+    def database_job():
+        return JSONResponse(jobs.job.as_dict() if jobs.job else {"status": "idle"})
+
+    @app.post("/database/sync")
+    def database_sync(
+        account: str = Form(""),
+        backfill: bool = Form(False),
+        since: str = Form(""),
+        method: str = Form(""),
+        offline_meta: bool = Form(False),
+    ):
+        if not config.has_credentials:
+            return back_to_database(NO_CREDENTIALS)
+        since_date = _parse_date(since)
+        method = clean_method(method)
+
+        def work(job: Job) -> None:
+            client = TastyClient(config)
+            with session_factory() as session:
+                run_sync(
+                    session, client, account=account or None,
+                    backfill=backfill, since=since_date,
+                    progress=lambda stage: setattr(job, "stage", stage),
+                    on_result=lambda r: job.log.extend(
+                        [r.transactions_line, r.snapshots_line]
+                    ),
+                )
+                process_step(job, session, method, offline_meta)
+
+        if not jobs.start("sync & process", work):
+            return back_to_database("a job is already running")
+        return back_to_database("sync & process started")
+
+    @app.post("/database/process")
+    def database_process(method: str = Form(""), offline_meta: bool = Form(False)):
+        method = clean_method(method)
+
+        def work(job: Job) -> None:
+            with session_factory() as session:
+                process_step(job, session, method, offline_meta)
+
+        if not jobs.start("process", work):
+            return back_to_database("a job is already running")
+        return back_to_database("process started")
+
+    @app.post("/database/accounts/refresh")
+    def database_accounts_refresh():
+        if not config.has_credentials:
+            return back_to_database(NO_CREDENTIALS)
+        try:
+            with session_factory() as session:
+                rows, _ = list_accounts(session, TastyClient(config))
+            msg = f"refreshed {len(rows)} accounts from the API"
+        except AuthError:
+            msg = NO_CREDENTIALS
+        except Exception as exc:  # noqa: BLE001 - surface, don't 500
+            log.exception("accounts refresh failed")
+            msg = f"accounts refresh failed: {exc}"
+        return back_to_database(msg)
 
     return app

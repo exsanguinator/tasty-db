@@ -18,9 +18,11 @@
     <a href="/closes?{{ filter_query }}" class="{{ 'active' if path.startswith('/closes') }}">Closes</a>
     <a href="/strategies?{{ filter_query }}" class="{{ 'active' if path.startswith('/strategies') }}">Strategies</a>
     <a href="/chains?{{ filter_query }}" class="{{ 'active' if path.startswith('/chain') }}">Chains</a>
+    <a href="/database" class="{{ 'active' if path.startswith('/database') }}">Database</a>
   </nav>
 </header>
 <main>
+  {% block filters %}
   <form class="filters" method="get" action="{{ request.url.path }}">
     <select name="account">
       <option value="">All accounts</option>
@@ -44,6 +46,7 @@
       <a href="{{ request.url.path }}?start={{ (today - timedelta(days=7)).isoformat() }}{{ '&account=' ~ filters.account if filters.account }}">1W</a>
     </span>
   </form>
+  {% endblock %}
   {% if message %}<div class="notice">{{ message }}</div>{% endif %}
   {% block content %}{% endblock %}
 </main>
