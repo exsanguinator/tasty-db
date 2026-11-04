@@ -74,6 +74,7 @@ data. Credentials are never written to the database or the repo.
 tastydb sync --backfill   # one-time: pull full history for all accounts
 tastydb process           # build lots and realized closes from the raw data
 tastydb dashboard         # open the web dashboard at http://127.0.0.1:8787/
+tastydb dashboard --host  # ...or serve it to your LAN (see below)
 ```
 
 Day to day:
@@ -238,27 +239,45 @@ dates.
 
 The dashboard binds to `127.0.0.1`, so by default only the machine running it
 can open it. To reach it from a phone or another computer on your network,
-run `forward.py` from the repo root next to the dashboard. It's a tiny
-standard-library TCP relay that listens on all interfaces on port 8787 and
-passes each connection through to `127.0.0.1:8787`:
+pass a bare `--host`, which binds every interface (`0.0.0.0`):
 
 ```sh
-tastydb dashboard      # terminal 1
-python3 forward.py     # terminal 2 (Ctrl-C to stop)
+tastydb dashboard --host
 ```
 
-Then browse to `http://<this-machine's-LAN-IP>:8787/`.
+On startup it prints `http://<this-machine's-LAN-IP>:8787/` to browse to from
+the other device. `--host <address>` binds one specific interface instead.
 
-- Both sides use port 8787. That works on macOS because loopback traffic goes
-  to the more specific `127.0.0.1` binding, but on Linux the relay usually
-  fails with "Address already in use". If it does, set `LISTEN_PORT` in
-  `forward.py` to another port (e.g. 8788) and browse to that one.
-- You can skip the relay with `tastydb dashboard --host 0.0.0.0`, which
-  serves the dashboard on every interface directly.
+If the printed address is wrong (VPN, several network adapters), find the LAN
+IP (usually 192.168.x.x, 10.x.x.x or 172.16–31.x.x; not 127.0.0.1) by hand:
+
+```sh
+# macOS: en0 is usually Wi-Fi on laptops, Ethernet on desktops; try en1 if empty
+ipconfig getifaddr en0
+route -n get default | grep interface   # which interface the default route uses
+
+# Linux
+hostname -I                  # first address listed
+ip route get 1.1.1.1         # the address after "src"
+
+# Windows
+ipconfig                     # "IPv4 Address" under the active adapter
+```
+
+The address can change when DHCP renews; set a DHCP reservation on the router
+if you bookmark it.
+
 - The dashboard has no authentication, and anyone who can reach it can press
   *Refresh marks* or *Sync & process*, which call the TastyTrade API with your
   credentials and rewrite the database's derived tables. Only expose it on a
   network you trust.
+- If the other device hangs while connecting but the LAN URL loads on this
+  machine, the traffic is being dropped before it reaches the dashboard. Check
+  for a VPN on either device (enable its "Allow LAN connections" option or
+  quit it), and for Wi-Fi client isolation, which is common on guest, hotel
+  and office networks. Isolation can only be turned off on the router; failing
+  that, use a phone hotspot or a mesh VPN such as Tailscale.
+- This replaces the old `forward.py` relay script, which has been removed.
 
 ## How it works (in one paragraph)
 

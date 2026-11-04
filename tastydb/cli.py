@@ -8,7 +8,7 @@
     tastydb credits --start D --end D      credits collected report
     tastydb pnl --start D --end D          account PnL / returns (TWR, XIRR) from net-liq
     tastydb status                         ingest/processing overview
-    tastydb dashboard                      local web UI (all of the above)
+    tastydb dashboard [--host]             local web UI (all of the above); --host = LAN
 """
 
 from __future__ import annotations
@@ -281,8 +281,40 @@ def pnl(app: App, start, end, account: str | None):
         )
 
 
+WILDCARD_HOSTS = ("0.0.0.0", "::")
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def _lan_ip() -> str | None:
+    """Best guess at this machine's LAN IP, or None when offline.
+
+    "Connecting" a UDP socket sends no packets but makes the OS pick the
+    outgoing interface for that destination, whose address getsockname()
+    then reports."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(("192.0.2.1", 80))  # TEST-NET-1: never actually contacted
+            return s.getsockname()[0]
+        except OSError:
+            return None
+
+
+def _browser_url(host: str, port: int) -> str:
+    """URL to open locally: a wildcard bind is reached via loopback."""
+    if host in WILDCARD_HOSTS:
+        host = "127.0.0.1"
+    elif ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{port}/"
+
+
 @main.command()
-@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--host", default="127.0.0.1", show_default=True, is_flag=False,
+              flag_value="0.0.0.0",
+              help="Interface to bind. A bare --host binds 0.0.0.0 (every interface, "
+                   "reachable from the LAN).")
 @click.option("--port", default=8787, show_default=True)
 @click.option("--no-browser", is_flag=True, help="Don't open the browser automatically")
 @click.pass_obj
@@ -296,9 +328,21 @@ def dashboard(app: App, host: str, port: int, no_browser: bool):
     from .web.app import create_app
 
     web_app = create_app(app.config)
+    url = _browser_url(host, port)
     if not no_browser:
-        threading.Timer(0.8, webbrowser.open, args=(f"http://{host}:{port}/",)).start()
-    click.echo(f"dashboard on http://{host}:{port}/ (db: {app.config.resolved_db_url})")
+        threading.Timer(0.8, webbrowser.open, args=(url,)).start()
+    click.echo(f"dashboard on {url} (db: {app.config.resolved_db_url})")
+    if host not in LOOPBACK_HOSTS:
+        if host in WILDCARD_HOSTS:
+            ip = _lan_ip()
+            if ip:
+                click.echo(f"from another device, browse to http://{ip}:{port}/")
+            else:
+                click.echo("couldn't determine the LAN IP; see README "
+                           "'Viewing the dashboard from another device'")
+        click.echo("WARNING: the dashboard has no authentication; anyone who can reach it "
+                   "can run sync/process and refresh marks. Only expose it on a trusted network.",
+                   err=True)
     uvicorn.run(web_app, host=host, port=port, log_level="warning")
 
 
